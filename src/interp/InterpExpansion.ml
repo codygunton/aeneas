@@ -633,6 +633,36 @@ let expand_symbolic_adt (span : Meta.span) (sv : symbolic_value)
           (List.map (fun el -> Some el) seel) )
   | _ -> [%craise] span ("expand_symbolic_adt: unexpected type: " ^ show_rty rty)
 
+(** Expand an enumeration only to the given variants: the last context is the
+    "otherwise" context, for the other variants, where the symbolic value is
+    left unchanged (similarly to {!expand_symbolic_int}). *)
+let expand_symbolic_adt_variants (span : Meta.span) (sv : symbolic_value)
+    (sv_place : SA.mplace option) (variants : VariantId.id list) :
+    eval_ctx -> (eval_ctx list * eval_ctx) * (SA.expr list * SA.expr -> SA.expr)
+    =
+ fun ctx ->
+  match sv.sv_ty with
+  | TAdt tref ->
+      let seel =
+        compute_expanded_symbolic_adt_value span true tref ctx
+        |> List.filter (fun see ->
+               match see with
+               | SeAdt (Some vid, _) -> List.mem vid variants
+               | _ -> [%craise] span "Expected an enumeration variant")
+      in
+      let ctx_branches =
+        List.map (apply_symbolic_expansion_non_borrow span sv ctx) seel
+      in
+      let cf (el, e) =
+        S.synthesize_symbolic_expansion span sv sv_place
+          (List.map (fun x -> Some x) seel @ [ None ])
+          (el @ [ e ])
+      in
+      ((ctx_branches, ctx), cf)
+  | _ ->
+      [%craise] span
+        ("expand_symbolic_adt_variants: unexpected type: " ^ show_rty sv.sv_ty)
+
 let expand_symbolic_int (span : Meta.span) (sv : symbolic_value)
     (sv_place : SA.mplace option) (int_type : integer_type)
     (tgts : integer_value list) :

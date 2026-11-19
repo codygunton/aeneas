@@ -197,7 +197,7 @@ and expansion_to_string (env : fmt_env) (indent : string) (indent_incr : string)
       indent ^ "let "
       ^ Values.symbolic_expansion_to_string env ty se
       ^ " = " ^ scrut ^ " in\n" ^ next
-  | ExpandAdt branches ->
+  | ExpandAdt (branches, otherwise) ->
       let branch_to_string
           ((variant_id, svl, branch) :
             variant_id option * symbolic_value list * expr) : string =
@@ -208,8 +208,14 @@ and expansion_to_string (env : fmt_env) (indent : string) (indent_incr : string)
         ^ " ->\n"
         ^ expr_to_string env indent1 indent_incr branch
       in
+      let otherwise =
+        match otherwise with
+        | None -> []
+        | Some e ->
+            [ indent ^ "| _ ->\n" ^ expr_to_string env indent1 indent_incr e ]
+      in
       indent ^ "match " ^ scrut ^ " with\n"
-      ^ String.concat "\n" (List.map branch_to_string branches)
+      ^ String.concat "\n" (List.map branch_to_string branches @ otherwise)
   | ExpandBool (e0, e1) ->
       let e0 = expr_to_string env indent1 indent_incr e0 in
       let e1 = expr_to_string env indent1 indent_incr e1 in

@@ -759,9 +759,23 @@ let join_ctxs (span : Meta.span) (fresh_abs_kind : abs_kind)
 
         (* Variable bindings *must* be in the prefix and consequently their
            ids must be the same *)
-        (* Match the values *)
+        (* Match the values. A value without borrows, loans or symbolic values
+           which is physically shared by the two environments (e.g., the value
+           of a local none of the joined branches touched, in particular ⊥) is
+           its own join, and matching it registers nothing: we don't rebuild
+           it, which keeps joining contexts with many locals (Cranelift's ISLE
+           lowering functions have >15k) proportional to the number of updated
+           locals in memory. *)
+        let rec plain (v : tvalue) =
+          match v.value with
+          | VLiteral _ | VBottom -> true
+          | VAdt adt -> List.for_all plain adt.fields
+          | VBorrow _ | VLoan _ | VSymbolic _ -> false
+        in
         let b = b0 in
-        let v = M.match_tvalues ctx0 ctx1 v0 v1 in
+        let v =
+          if v0 == v1 && plain v0 then v0 else M.match_tvalues ctx0 ctx1 v0 v1
+        in
         let var = EBinding (BVar b, v) in
         (* Continue *)
         var :: join_prefixes env0' env1'

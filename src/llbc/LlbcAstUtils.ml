@@ -189,19 +189,23 @@ let statement_has_break_continue_return (st : statement) : bool =
     false
   with Utils.Found -> true
 
-(** Return true if the block contains a statement which breaks the control flow,
-    at the exception of panics (that is: a break, a continue or a return) *)
+(** Return true if the block contains a statement which breaks the control flow
+    out of the block, at the exception of panics (that is: a return, or a break
+    or a continue targeting a loop enclosing the block). Breaks and continues
+    which only target loops nested in the block don't count: the control flow
+    after such loops is the regular one. *)
 let block_has_break_continue_return (st : block) : bool =
   let visitor =
     object
-      inherit [_] iter_statement
-      method! visit_Break _ _ = raise Utils.Found
-      method! visit_Continue _ _ = raise Utils.Found
+      inherit [_] iter_statement as super
+      method! visit_Loop depth b = super#visit_Loop (depth + 1) b
+      method! visit_Break depth i = if i >= depth then raise Utils.Found
+      method! visit_Continue depth i = if i >= depth then raise Utils.Found
       method! visit_Return _ = raise Utils.Found
     end
   in
   try
-    visitor#visit_block () st;
+    visitor#visit_block 0 st;
     false
   with Utils.Found -> true
 

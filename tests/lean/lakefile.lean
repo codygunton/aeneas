@@ -27,7 +27,9 @@ package «tests» {}
 @[default_target] lean_lib BuiltinAuto
 @[default_target] lean_lib CastSigned
 @[default_target] lean_lib ChunksExact
+@[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
+@[default_target] lean_lib ClifvJoinInnerLoop
 @[default_target] lean_lib ClifvLoopEarlyReturn
 @[default_target] lean_lib ClifvLoopOuterBreak
 @[default_target] lean_lib ClifvLoopOuterContinue

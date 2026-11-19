@@ -589,10 +589,31 @@ let eval_operand_no_reorganize (config : config) (span : Meta.span)
       [%cassert] span
         (not (bottom_in_value ctx.ended_regions v))
         "There should be no bottoms in the value we are about to move";
-      (* Move the value *)
-      let bottom : tvalue = { value = VBottom; ty = v.ty } in
-      let ctx = write_path span path bottom ctx in
-      (v, ctx, fun e -> e)
+      (* Move the value.
+
+         A value without borrows nor loans (including in the types of its
+         symbolic values) is left in place: it is a pure value, which the
+         translation can share between the source and the destination, and Rust
+         never reads a moved place. This avoids the ⊥ which the joins introduce
+         when the value is moved in some branches only, while the code after the
+         join still reads it in the other branches (the code after an escape
+         lowered by the pre-passes, see [PrePasses.join_block_escapes], is
+         joined with the code which doesn't escape). *)
+      let rec plain (v : tvalue) : bool =
+        match v.value with
+        | VLiteral _ -> true
+        | VAdt av -> List.for_all plain av.fields
+        | VSymbolic sv ->
+            not
+              (TypesUtils.ty_has_borrows (Some span) ctx.type_ctx.type_infos
+                 sv.sv_ty)
+        | VBottom | VBorrow _ | VLoan _ -> false
+      in
+      if plain v then (v, ctx, fun e -> e)
+      else
+        let bottom : tvalue = { value = VBottom; ty = v.ty } in
+        let ctx = write_path span path bottom ctx in
+        (v, ctx, fun e -> e)
 
 let eval_operand (config : config) (span : Meta.span) (op : operand)
     (ctx : eval_ctx) :

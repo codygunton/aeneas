@@ -78,12 +78,19 @@ let synthesize_symbolic_expansion (span : Meta.span) (sv : symbolic_value)
     | TScalar (TFloat _) ->
         [%craise] span "Float are not supported in Aeneas yet"
     | TAdt _ ->
-        (* Branching: it is necessarily an enumeration expansion *)
+        (* Branching: it is necessarily an enumeration expansion. A last
+           branch without expansion is the "otherwise" branch, where the
+           symbolic value is left unexpanded. *)
         let get_variant (see : symbolic_expansion option) :
             VariantId.id option * symbolic_value list =
           match see with
           | Some (SeAdt (vid, fields)) -> (vid, fields)
           | _ -> [%craise] span "Ill-formed branching ADT expansion"
+        in
+        let ls, otherwise =
+          match List.rev ls with
+          | (None, e) :: rest -> (List.rev rest, Some e)
+          | _ -> (ls, None)
         in
         let exp =
           List.map
@@ -92,7 +99,7 @@ let synthesize_symbolic_expansion (span : Meta.span) (sv : symbolic_value)
               (vid, fields, exp))
             ls
         in
-        ExpandAdt exp
+        ExpandAdt (exp, otherwise)
     | TRef (_, _, _) -> (
         (* Reference expansion: there should be one branch *)
         match ls with

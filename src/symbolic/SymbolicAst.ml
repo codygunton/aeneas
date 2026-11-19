@@ -319,8 +319,11 @@ and expansion =
           - concrete expansion
           - borrow expansion *Doesn't* include:
           - expansion of ADTs with one variant *)
-  | ExpandAdt of (variant_id option * symbolic_value list * expr) list
-      (** ADT expansion *)
+  | ExpandAdt of (variant_id option * symbolic_value list * expr) list * expr option
+      (** ADT expansion. The optional expression is for the "otherwise"
+          branch: the variants without a branch, for which the symbolic value
+          is left unexpanded (we don't expand all the variants of a large
+          enumeration when the code matches only a few of them). *)
   | ExpandBool of expr * expr
       (** A boolean expansion (i.e, an [if ... then ... else ...]) *)
   | ExpandInt of integer_type * (integer_value * expr) list * expr

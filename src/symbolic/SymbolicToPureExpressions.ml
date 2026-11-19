@@ -1417,14 +1417,15 @@ and translate_expansion (p : S.mplace option) (sv : V.symbolic_value)
       | SeAdt _ ->
           (* Should be in the [ExpandAdt] case *)
           [%craise] ctx.span "Unreachable")
-  | ExpandAdt branches -> (
+  | ExpandAdt (branches, otherwise) -> (
       (* We don't do the same thing if there is a branching or not *)
       match branches with
       | [] -> [%craise] ctx.span "Unreachable"
       | [ (variant_id, svl, branch) ]
-        when not
-               (TypesUtils.ty_is_custom_adt sv.V.sv_ty
-               && !Config.always_deconstruct_adts_with_matches) ->
+        when otherwise = None
+             && not
+                  (TypesUtils.ty_is_custom_adt sv.V.sv_ty
+                  && !Config.always_deconstruct_adts_with_matches) ->
           (* There is exactly one branch: no branching.
 
              We can decompose the ADT value with a let-binding, unless
@@ -1446,6 +1447,15 @@ and translate_expansion (p : S.mplace option) (sv : V.symbolic_value)
           in
           let branches =
             List.map (fun (vid, svl, e) -> translate_branch vid svl e) branches
+          in
+          let branches =
+            match otherwise with
+            | None -> branches
+            | Some e ->
+                (* The symbolic value is left unexpanded: no new variables *)
+                let branch = translate_expr e ctx in
+                let pat : tpat = { pat = PIgnored; ty = scrutinee.ty } in
+                branches @ [ { pat; branch } ]
           in
           let e =
             Switch

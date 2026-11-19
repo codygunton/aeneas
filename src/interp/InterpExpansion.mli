@@ -32,6 +32,17 @@ val expand_symbolic_adt :
   eval_ctx ->
   eval_ctx list * (SA.expr list -> SA.expr)
 
+(** Expand an enumeration only to the given variants: the last context is the
+    "otherwise" context, for the other variants, where the symbolic value is
+    left unchanged. *)
+val expand_symbolic_adt_variants :
+  Meta.span ->
+  symbolic_value ->
+  SA.mplace option ->
+  Types.VariantId.id list ->
+  eval_ctx ->
+  (eval_ctx list * eval_ctx) * (SA.expr list * SA.expr -> SA.expr)
+
 (** Expand a symbolic boolean.
 
     Parameters: see {!expand_symbolic_adt}. *)

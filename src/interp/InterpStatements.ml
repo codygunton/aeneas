@@ -638,21 +638,31 @@ let eval_global_as_fresh_symbolic_value (span : Meta.span)
       in
       (ctx, mk_tvalue_from_symbolic_value sval, ty, cc)
 
-(** Statement evaluation counter for [AENEAS_MEMTRACE]: a trace line every 100k
-    statements, to tell path explosion apart from expensive operations *)
+(** Statement evaluation counter for [AENEAS_MEMTRACE]: a trace line every
+    [AENEAS_MEMTRACE] statements if it is a positive integer, every 100k
+    otherwise, to tell path explosion apart from expensive operations *)
 let eval_statement_counter = ref 0
 
-let memtrace_enabled = lazy (Sys.getenv_opt "AENEAS_MEMTRACE" <> None)
+(* Read at module initialization: a [lazy] forced from parallel domains races
+   ([CamlinternalLazy.Undefined]). *)
+let memtrace_enabled = Sys.getenv_opt "AENEAS_MEMTRACE" <> None
+
+let memtrace_period =
+  match Option.bind (Sys.getenv_opt "AENEAS_MEMTRACE") int_of_string_opt with
+  | Some n when n > 0 -> n
+  | _ -> 100_000
 
 (** Evaluate a statement. *)
 let rec eval_statement (config : config) (st : statement) : stl_cm_fun =
  fun ctx ->
-  if Lazy.force memtrace_enabled then (
+  if memtrace_enabled then (
     incr eval_statement_counter;
-    if !eval_statement_counter mod 100_000 = 0 then
-      Printf.eprintf "memtrace statements=%d heap=%dMiB at %s\n%!"
-        !eval_statement_counter
+    if !eval_statement_counter mod memtrace_period = 0 then
+      Printf.eprintf
+        "memtrace statements=%d env=%d heap=%dMiB live=%dMiB at %s\n%!"
+        !eval_statement_counter (List.length ctx.env)
         ((Gc.quick_stat ()).heap_words * (Sys.word_size / 8) / (1 lsl 20))
+        ((Gc.stat ()).live_words * (Sys.word_size / 8) / (1 lsl 20))
         (Errors.raw_span_to_string st.span));
   (* Debugging *)
   [%ltrace
@@ -947,7 +957,7 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
               | [ e_true; e_false ] -> cf_bool (e_true, e_false)
               | _ -> [%internal_error] span
             in
-            if (not join) && Lazy.force memtrace_enabled then
+            if (not join) && memtrace_enabled then
               Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
                 (List.length ctx_resl) (Errors.raw_span_to_string span);
             if join then
@@ -1010,7 +1020,7 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
               cf_int (el, e_otherwise)
             in
             let cf = cc_comp cc cf in
-            if (not join) && Lazy.force memtrace_enabled then
+            if (not join) && memtrace_enabled then
               Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
                 (List.length resl) (Errors.raw_span_to_string span);
             if join then
@@ -1058,16 +1068,64 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
             in
             eval_block config target ctx
         | VSymbolic sv ->
-            (* Expand the symbolic value - may lead to branching *)
-            let ctxl, cf_expand =
-              expand_symbolic_adt span sv (Some (S.mk_mplace span p ctx)) ctx
+            (* Expand the symbolic value - may lead to branching.
+
+               If the switch has a fallback for at least two variants of an
+               enumeration without borrows, we only expand the variants with
+               a branch, and evaluate the fallback with the symbolic value left
+               unexpanded (in the translation: a [_] pattern). This avoids one
+               context per variant (Cranelift's ISLE lowering code matches a
+               few of the ~190 opcodes at a time). *)
+            let mplace = Some (S.mk_mplace span p ctx) in
+            let listed =
+              List.filter_map
+                (fun ((case : constant_expr), _) ->
+                  match case.kind with
+                  | CDiscriminant (_, vid) -> Some vid
+                  | _ -> None)
+                data.branches
             in
-            (* Re-evaluate the switch - the value is not symbolic anymore,
-               which means we will go to the other branch *)
-            let resl =
-              List.map
-                (fun ctx -> (eval_switch config span data branches) ctx)
-                ctxl
+            let num_variants =
+              match sv.sv_ty with
+              | TAdt { id = def_id; builtin = None; _ } -> (
+                  match (ctx_lookup_type_decl span ctx def_id).kind with
+                  | Enum variants -> List.length variants
+                  | _ -> 0)
+              | _ -> 0
+            in
+            let partial =
+              data.fallback <> None
+              && num_variants - List.length listed >= 2
+              && not
+                   (TypesUtils.ty_has_borrows (Some span) ctx.type_ctx.type_infos
+                      sv.sv_ty)
+            in
+            let resl, cf_expand =
+              if partial then
+                let (ctxl, ctx_otherwise), cf =
+                  expand_symbolic_adt_variants span sv mplace listed ctx
+                in
+                let otherwise =
+                  branch ([%unwrap_with_span] span data.fallback "No fallback")
+                in
+                (* Re-evaluate the switch in the expanded contexts: the value
+                   is not symbolic anymore *)
+                let resl =
+                  List.map (fun ctx -> eval_switch config span data branches ctx) ctxl
+                  @ [ eval_block config otherwise ctx_otherwise ]
+                in
+                ( resl,
+                  fun el ->
+                    let el, e = Collections.List.pop_last el in
+                    cf (el, e) )
+              else
+                let ctxl, cf_expand = expand_symbolic_adt span sv mplace ctx in
+                (* Re-evaluate the switch - the value is not symbolic anymore,
+                   which means we will go to the other branch *)
+                ( List.map
+                    (fun ctx -> (eval_switch config span data branches) ctx)
+                    ctxl,
+                  cf_expand )
             in
             (* Should we join the contexts after the match? *)
             let join =
@@ -1075,7 +1133,7 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
             in
             let ctx_resl, cf = comp_seqs __FILE__ __LINE__ span resl in
             let cc = cc_comp cf_expand cf in
-            if (not join) && Lazy.force memtrace_enabled then
+            if (not join) && memtrace_enabled then
               Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
                 (List.length ctx_resl) (Errors.raw_span_to_string span);
             if join then (* Join the contexts *)
@@ -1155,10 +1213,18 @@ and eval_switch_with_join (config : config) (span : Meta.span)
     (* Note that we make the join *recoverable*: if the join fails (because
        it requires supporting some unsupported case) it is possible to recover
        from it, in which case we simply duplicate the code after the switch *)
+    if memtrace_enabled then
+      Printf.eprintf "memtrace join start: %d contexts heap=%dMiB at %s\n%!"
+        (List.length ctx_to_join)
+        ((Gc.quick_stat ()).heap_words * (Sys.word_size / 8) / (1 lsl 20))
+        (Errors.raw_span_to_string span);
     let _, joined_ctx =
       InterpJoin.join_ctxs_list config span ~recoverable:!Config.recover_joins
         ~with_abs_conts:true Join ctx_to_join
     in
+    if memtrace_enabled then
+      Printf.eprintf "memtrace join done: heap=%dMiB\n%!"
+        ((Gc.quick_stat ()).heap_words * (Sys.word_size / 8) / (1 lsl 20));
     [%ldebug "Joined ctx:\n" ^ eval_ctx_to_string joined_ctx];
     let ctx0_aids = env_get_abs_ids ctx0.env in
     [%ldebug "ctx0_aids:\n" ^ AbsId.Set.to_string None ctx0_aids];

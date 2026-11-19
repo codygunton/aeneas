@@ -2086,6 +2086,199 @@ let filter_type_aliases (crate : crate) : crate =
            (Option.get crate.declarations));
   }
 
+(** Functions with more locals than this have their locals coalesced (see
+    [coalesce_locals]). *)
+let coalesce_locals_threshold = 512
+
+(** Make locals whose live ranges are disjoint share a single local, in the
+    functions with many locals.
+
+    The symbolic interpreter keeps every local of a body in the environment
+    from the function entry, and updating a local rebuilds the environment up
+    to it: with >15k locals (Cranelift's ISLE lowering functions) every
+    statement allocates megabytes, which the synthesized symbolic AST retains.
+    Rust's temporaries mostly live for a few statements, so that a few hundred
+    locals suffice.
+
+    The live range of a local is the interval between its first and last
+    occurrences (storage statements included) in program order, extended to
+    the whole loop for the occurrences in a loop which continues. The body is
+    structured: along any execution path the program order only goes back at
+    the [continue]s, so that a local is never read outside of its interval and
+    two locals of the same type whose intervals are disjoint can share a local:
+    the shared local is always (re)initialized before being read. We don't
+    coalesce the return value, the inputs, the locals whose places are borrowed
+    (the loans would outlive the interval), the drop flags and the locals
+    introduced by the other passes, which are found by name. *)
+let coalesce_locals (_ : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body
+    when List.length body.locals.locals > coalesce_locals_threshold ->
+      let pos = ref 0 in
+      (* Occurrence intervals, and the continuing loops of the occurrences *)
+      let first = Hashtbl.create 1024 in
+      let last = Hashtbl.create 1024 in
+      let excluded = Hashtbl.create 64 in
+      (* The continuing loop which contains the current position, if any:
+         its start position (we only need the outermost one) *)
+      let cur_loop : int option ref = ref None in
+      let loops_of = Hashtbl.create 64 in
+      let loop_end = Hashtbl.create 64 in
+      let rec base (p : place) : local_id option =
+        match p.kind with
+        | PlaceLocal id -> Some id
+        | PlaceProjection (p, _) -> base p
+        | PlaceGlobal _ -> None
+      in
+      let exclude_place p =
+        Option.iter (fun id -> Hashtbl.replace excluded id ()) (base p)
+      in
+      let visitor =
+        object
+          inherit [_] iter_statement as super
+
+          method! visit_statement env st =
+            incr pos;
+            super#visit_statement env st
+
+          method! visit_Loop env b =
+            if !cur_loop = None && loop_continues b then (
+              let start = !pos in
+              cur_loop := Some start;
+              super#visit_Loop env b;
+              Hashtbl.replace loop_end start !pos;
+              cur_loop := None)
+            else super#visit_Loop env b
+
+          method! visit_local_id _ id =
+            if not (Hashtbl.mem first id) then Hashtbl.replace first id !pos;
+            Hashtbl.replace last id !pos;
+            Option.iter (fun l -> Hashtbl.replace loops_of (id, l) ()) !cur_loop
+
+          method! visit_RvRef env p kind op =
+            exclude_place p;
+            super#visit_RvRef env p kind op
+
+          method! visit_RawPtr env p kind op =
+            exclude_place p;
+            super#visit_RawPtr env p kind op
+        end
+      in
+      visitor#visit_block () body.body;
+      (* Extend the intervals to the continuing loops *)
+      Hashtbl.iter
+        (fun (id, start) () ->
+          let e = Hashtbl.find loop_end start in
+          if Hashtbl.find first id > start then Hashtbl.replace first id start;
+          if Hashtbl.find last id < e then Hashtbl.replace last id e)
+        loops_of;
+      let candidate (l : local) =
+        LocalId.to_int l.index > body.locals.arg_count
+        && Hashtbl.mem first l.index
+        && (not (Hashtbl.mem excluded l.index))
+        && l.drop_flag_for = None
+        && l.name <> Some return_carrier_name
+      in
+      let drop_flags =
+        List.filter_map
+          (fun (l : local) -> Option.bind l.drop_flag_for base)
+          body.locals.locals
+      in
+      List.iter (fun id -> Hashtbl.replace excluded id ()) drop_flags;
+      let candidates, kept = List.partition candidate body.locals.locals in
+      (* Greedy interval coloring, per type: the slots of a type with the end
+         of their current interval *)
+      let sorted =
+        List.sort
+          (fun (a : local) (b : local) ->
+            compare (Hashtbl.find first a.index) (Hashtbl.find first b.index))
+          candidates
+      in
+      let slots_of_ty : (ty, (local list ref * int ref) list ref) Hashtbl.t =
+        Hashtbl.create 64
+      in
+      let slots = ref [] in
+      List.iter
+        (fun (l : local) ->
+          let s = Hashtbl.find first l.index in
+          let e = Hashtbl.find last l.index in
+          let tys =
+            match Hashtbl.find_opt slots_of_ty l.local_ty with
+            | Some x -> x
+            | None ->
+                let x = ref [] in
+                Hashtbl.add slots_of_ty l.local_ty x;
+                x
+          in
+          match List.find_opt (fun (_, slot_end) -> !slot_end < s) !tys with
+          | Some (members, slot_end) ->
+              members := l :: !members;
+              slot_end := e
+          | None ->
+              let slot = (ref [ l ], ref e) in
+              tys := slot :: !tys;
+              slots := slot :: !slots)
+        sorted;
+      (* Renumber: the kept locals (in order) then the slots *)
+      let slots = List.rev_map (fun (m, _) -> List.rev !m) !slots in
+      let map = Hashtbl.create 1024 in
+      let kept =
+        List.mapi
+          (fun i (l : local) ->
+            let index = LocalId.of_int i in
+            Hashtbl.replace map l.index index;
+            { l with index })
+          kept
+      in
+      let nkept = List.length kept in
+      let merged =
+        List.mapi
+          (fun i (members : local list) ->
+            let index = LocalId.of_int (nkept + i) in
+            List.iter (fun (l : local) -> Hashtbl.replace map l.index index) members;
+            let l = List.hd members in
+            match members with
+            | [ _ ] -> { l with index }
+            | _ ->
+                {
+                  l with
+                  index;
+                  name = None;
+                  is_mutable = true;
+                  borrowck_constraints = [];
+                })
+          slots
+      in
+      let rename =
+        object
+          inherit [_] map_statement
+          method! visit_local_id _ id = Hashtbl.find map id
+        end
+      in
+      let locals =
+        List.map
+          (fun (l : local) ->
+            {
+              l with
+              drop_flag_for =
+                Option.map (rename#visit_place ()) l.drop_flag_for;
+            })
+          (kept @ merged)
+      in
+      let body =
+        {
+          body with
+          body = rename#visit_block () body.body;
+          locals = { body.locals with locals };
+        }
+      in
+      if Sys.getenv_opt "AENEAS_MEMTRACE" <> None then
+        Printf.eprintf "memtrace coalesce_locals: %d -> %d locals\n%!"
+          (List.length kept + List.length candidates)
+          (List.length locals);
+      { f with body = StructuredBody body }
+  | _ -> f
+
 (** Refresh the statement ids to make sure they are unique *)
 let refresh_statement_ids (_ : crate) (f : fun_decl) : fun_decl =
   (* Map  *)
@@ -3238,6 +3431,7 @@ let apply_passes (crate : crate) : crate =
       ("simplify_panics", simplify_panics);
       ("decompose_global_accesses", decompose_global_accesses);
       ("finalize_return_carrier", finalize_return_carrier);
+      ("coalesce_locals", coalesce_locals);
       ("refresh_statement_ids", refresh_statement_ids);
     ]
   in
