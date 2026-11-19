@@ -329,6 +329,40 @@ let write (path : string) (env : envelope) : unit =
       Yojson.Safe.pretty_to_channel out (envelope_to_yojson env);
       output_char out '\n')
 
+(** One entry of [failures.json]: an item that failed to translate (see
+    [Errors.record_item_failure]). *)
+type failure_entry = {
+  kind : string;
+  rust_name : string;
+  def_id : int;
+  reason : string;
+  emitter : string;
+  blocked_by : string list;
+}
+[@@deriving to_yojson]
+
+let write_failures (path : string) : unit =
+  let entries =
+    List.rev_map
+      (fun (r : Errors.item_failure_record) ->
+        failure_entry_to_yojson
+          {
+            kind = r.kind;
+            rust_name = r.rust_name;
+            def_id = r.def_id;
+            reason = r.reason;
+            emitter = r.emitter;
+            blocked_by = r.blocked_by;
+          })
+      !Errors.item_failure_records
+  in
+  let out = open_out path in
+  Fun.protect
+    ~finally:(fun () -> close_out out)
+    (fun () ->
+      Yojson.Safe.pretty_to_channel out (`List entries);
+      output_char out '\n')
+
 let write_if_enabled ~(crate_name : string) : string option =
   if !Config.emit_json then begin
     let path = Filename.concat state.dest_dir "translation.json" in
@@ -343,6 +377,7 @@ let write_if_enabled ~(crate_name : string) : string option =
         trait_decls = List.rev state.trait_decl_entries;
         trait_impls = List.rev state.trait_impl_entries;
       };
+    write_failures (Filename.concat state.dest_dir "failures.json");
     Some path
   end
   else None

@@ -133,7 +133,8 @@ let translate_type_decls (ctx : Contexts.decls_ctx) : type_decl list =
   List.filter_map
     (fun d ->
       try Some (translate_type_decl ctx d)
-      with CFailure error ->
+      with exn when Errors.is_item_failure exn -> (
+        let error = Errors.to_item_failure exn in
         let env = PrintPure.decls_ctx_to_fmt_env ctx in
         let name = PrintPure.name_to_string env d.item_meta.name in
         let name_pattern =
@@ -147,7 +148,13 @@ let translate_type_decls (ctx : Contexts.decls_ctx) : type_decl list =
           ("Could not translate type decl '" ^ name
          ^ " because of previous error\nName pattern: '" ^ name_pattern ^ "'"
           ^ Contexts.compute_local_uses_error_message ctx (IdType d.def_id));
-        None)
+        Errors.record_item_failure ~kind:"type" ~rust_name:name
+          ~def_id:(TypeDeclId.to_int d.def_id)
+          error;
+        (* Keep the type, as an opaque type with the same name and parameters, so
+           that the items which mention it still refer to a declared name. *)
+        try Some (translate_type_decl ctx { d with kind = Opaque })
+        with exn when Errors.is_item_failure exn -> None))
     (TypeDeclId.Map.values ctx.type_ctx.to_extract)
 
 let translate_binder (span : span option) (translate_inside : 'a -> 'b)

@@ -253,3 +253,75 @@ let option_get (file : string) (line : int) (span : Meta.span) (x : 'a option) :
   match x with
   | None -> internal_error file line span
   | Some x -> x
+
+(** Per-item failures that must not abort the whole crate: [CFailure], plus the
+    OCaml exceptions raised by broken internal invariants ([Invalid_argument],
+    [Not_found], and [Failure] unless [Config.fail_hard] asked to abort).
+    Anything else, in particular [Stack_overflow] and [Out_of_memory], is not an
+    item failure and must propagate. The emitter of an OCaml exception is the
+    innermost backtrace frame in a source file of ours (a path with a '/'). *)
+let item_failure (e : exn) : cfailure option =
+  let of_exn (msg : string) : cfailure =
+    let file, line =
+      match Printexc.backtrace_slots (Printexc.get_raw_backtrace ()) with
+      | None -> ("<no backtrace>", 0)
+      | Some slots -> (
+          let ours =
+            Array.to_list slots
+            |> List.filter_map Printexc.Slot.location
+            |> List.find_opt (fun (l : Printexc.location) ->
+                   String.contains l.filename '/')
+          in
+          match ours with
+          | None -> ("<stdlib>", 0)
+          | Some l -> (l.filename, l.line_number))
+    in
+    let msg = format_error_message_with_file_line file line None msg in
+    log#serror (msg ^ "\n");
+    { span = None; file; line; msg }
+  in
+  match e with
+  | CFailure error -> Some error
+  | Invalid_argument msg -> Some (of_exn ("Invalid_argument: " ^ msg))
+  | Not_found -> Some (of_exn "Not_found")
+  | Failure msg when not !Config.fail_hard -> Some (of_exn ("Failure: " ^ msg))
+  | _ -> None
+
+let is_item_failure (e : exn) : bool =
+  match e with
+  | CFailure _ | Invalid_argument _ | Not_found -> true
+  | Failure _ -> not !Config.fail_hard
+  | _ -> false
+
+(** Convert an exception accepted by [is_item_failure]. *)
+let to_item_failure (e : exn) : cfailure = Option.get (item_failure e)
+
+(** Items that failed to translate and were replaced (opaque) or dropped, for
+    [-emit-json]'s [failures.json]. [kind] is one of [type], [fun], [global],
+    [trait_decl], [trait_impl]. *)
+type item_failure_record = {
+  kind : string;
+  rust_name : string;
+  def_id : int;
+  reason : string;
+  emitter : string;
+  blocked_by : string list;
+}
+
+let item_failure_records : item_failure_record list ref = ref []
+let item_failure_mutex = Mutex.create ()
+
+let record_item_failure ~(kind : string) ~(rust_name : string) ~(def_id : int)
+    ?(blocked_by : string list = []) (error : cfailure) : unit =
+  let r =
+    {
+      kind;
+      rust_name;
+      def_id;
+      reason = error.msg;
+      emitter = error.file ^ ":" ^ string_of_int error.line;
+      blocked_by;
+    }
+  in
+  Mutex.protect item_failure_mutex (fun () ->
+      item_failure_records := r :: !item_failure_records)

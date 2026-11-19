@@ -680,13 +680,18 @@ let () =
         in
         (* Print *)
         let fmt_env = Print.crate_to_fmt_env m in
+        (* Some names (e.g. of tuples) have no pattern syntax: the printer fails. *)
+        let printable (f : unit -> string) : string =
+          try f () with Failure _ -> "<unprintable name>"
+        in
+        let pattern_of (span : Meta.span) (name : Types.name) : string =
+          printable (fun () ->
+              LlbcAstUtils.name_with_crate_to_pattern_string (Some span) m name)
+        in
         let type_decls =
           List.map
             (fun (d : Types.type_decl) ->
-              let pattern =
-                LlbcAstUtils.name_with_crate_to_pattern_string
-                  (Some d.item_meta.span) m d.item_meta.name
-              in
+              let pattern = pattern_of d.item_meta.span d.item_meta.name in
               "Type decl (pattern: [" ^ pattern ^ "]]):\n"
               ^ Print.type_decl_to_string fmt_env d)
             (Types.TypeDeclId.Map.values type_decls)
@@ -694,10 +699,7 @@ let () =
         let fun_decls =
           List.map
             (fun (d : LlbcAst.fun_decl) ->
-              let pattern =
-                LlbcAstUtils.name_with_crate_to_pattern_string
-                  (Some d.item_meta.span) m d.item_meta.name
-              in
+              let pattern = pattern_of d.item_meta.span d.item_meta.name in
               let d =
                 (* FIXME: there is a bug in the formatter when splitting the predicates
                    and trait clauses between the inherited ones and the others (the
@@ -713,10 +715,7 @@ let () =
         let global_decls =
           List.map
             (fun (d : LlbcAst.global_decl) ->
-              let pattern =
-                LlbcAstUtils.name_with_crate_to_pattern_string
-                  (Some d.item_meta.span) m d.item_meta.name
-              in
+              let pattern = pattern_of d.item_meta.span d.item_meta.name in
               "Global decl (pattern: [" ^ pattern ^ "]]):\n"
               ^ Print.global_decl_to_string fmt_env "" "  " d)
             (LlbcAst.GlobalDeclId.Map.values global_decls)
@@ -724,10 +723,7 @@ let () =
         let trait_decls =
           List.map
             (fun (d : LlbcAst.trait_decl) ->
-              let pattern =
-                LlbcAstUtils.name_with_crate_to_pattern_string
-                  (Some d.item_meta.span) m d.item_meta.name
-              in
+              let pattern = pattern_of d.item_meta.span d.item_meta.name in
               "Trait decl (pattern: [" ^ pattern ^ "]]):\n"
               ^ Print.trait_decl_to_string fmt_env "" "  " d)
             (LlbcAst.TraitDeclId.Map.values trait_decls)
@@ -736,8 +732,9 @@ let () =
           List.map
             (fun ((d, trait_decl) : LlbcAst.trait_impl * LlbcAst.trait_decl) ->
               let pattern =
-                LlbcAstUtils.trait_impl_with_crate_to_pattern_string
-                  (Some d.item_meta.span) m trait_decl d
+                printable (fun () ->
+                    LlbcAstUtils.trait_impl_with_crate_to_pattern_string
+                      (Some d.item_meta.span) m trait_decl d)
               in
               "Trait impl (pattern: [" ^ pattern ^ "]]):\n"
               ^ Print.trait_impl_to_string fmt_env "" "  " d)

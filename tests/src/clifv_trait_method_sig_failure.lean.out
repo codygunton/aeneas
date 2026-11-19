@@ -1,0 +1,20 @@
+[[92mInfo[39m ] Imported: tests/llbc/clifv_trait_method_sig_failure.llbc
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[93mWarn[39m ] Could not translate the signature of method 'clifv_trait_method_sig_failure::Bad::0' because of previous error
+Definition span: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Compiler source: Translate.ml, line 489
+
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[93mWarn[39m ] Could not translate the trait declaration 'clifv_trait_method_sig_failure::Bad because of previous error
+Name pattern: 'clifv_trait_method_sig_failure::Bad'
+Definition span: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+Compiler source: Translate.ml, line 640
+
+[[92mInfo[39m ] Generated the partial file (because of 2 errors, including 1 unique errors): tests/lean/ClifvTraitMethodSigFailure.lean
+[[92mInfo[39m ] Total execution time: 0.186040 seconds

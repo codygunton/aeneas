@@ -83,6 +83,7 @@ let run_aeneas (env : runner_env) (case : Input.t) (backend : Backend.t) =
   let abort_on_error =
     match action with
     | KnownFailure when backend = Backend.BorrowCheck -> []
+    | _ when per_backend.continue_on_error -> []
     | _ -> [ "-abort-on-error" ]
   in
   let args =

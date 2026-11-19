@@ -29,7 +29,8 @@ let analyze_type_declarations (crate : crate)
   List.fold_left
     (fun infos decl ->
       try analyze_type_declaration_group None crate infos decl
-      with CFailure error ->
+      with exn when Errors.is_item_failure exn ->
+        let error = Errors.to_item_failure exn in
         let fmt_env : Print.fmt_env = Charon.Print.crate_to_fmt_env crate in
         let decls = Charon.GAstUtils.g_declaration_group_to_list decl in
         let decl_id_to_string (id : TypeDeclId.id) : string =
@@ -46,7 +47,31 @@ let analyze_type_declarations (crate : crate)
         [%save_error_opt_span] error.span
           ("Encountered an error when analyzing the following type \
             declarations group:\n" ^ decls);
-        infos)
+        (* Analyze the group's types as if they were opaque (a conservative
+           approximation), so that the types mentioning them can still be
+           analyzed. *)
+        List.iter
+          (fun id ->
+            match TypeDeclId.Map.find_opt id crate.type_decls with
+            | None -> ()
+            | Some d ->
+                Errors.record_item_failure ~kind:"type_analysis"
+                  ~rust_name:(Print.name_to_string fmt_env d.item_meta.name)
+                  ~def_id:(TypeDeclId.to_int id) error)
+          (Charon.GAstUtils.g_declaration_group_to_list decl);
+        let group_ids = Charon.GAstUtils.g_declaration_group_to_list decl in
+        let opaque_crate =
+          {
+            crate with
+            type_decls =
+              TypeDeclId.Map.filter_map
+                (fun id (d : type_decl) ->
+                  Some (if List.mem id group_ids then { d with kind = Opaque } else d))
+                crate.type_decls;
+          }
+        in
+        (try analyze_type_declaration_group None opaque_crate infos decl
+         with exn when Errors.is_item_failure exn -> infos))
     TypeDeclId.TreeMap.empty decls
 
 let compute_contexts (crate : crate) : decls_ctx =

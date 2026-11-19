@@ -27,6 +27,12 @@ package «tests» {}
 @[default_target] lean_lib BuiltinAuto
 @[default_target] lean_lib CastSigned
 @[default_target] lean_lib ChunksExact
+@[default_target] lean_lib ClifvLoopEarlyReturn
+@[default_target] lean_lib ClifvLoopOuterBreak
+@[default_target] lean_lib ClifvLoopOuterContinue
+@[default_target] lean_lib ClifvNestedLoopReturn
+@[default_target] lean_lib ClifvTraitMethodSigFailure
+@[default_target] lean_lib ClifvTupleName
 @[default_target] lean_lib Closures
 @[default_target] lean_lib Constants
 @[default_target] lean_lib ConstantsLean

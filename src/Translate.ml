@@ -277,16 +277,67 @@ let translate_function_to_pure_aux (trans_ctx : trans_ctx)
   (* *)
   f
 
+(** The type declarations that failed to translate (and were replaced by opaque
+    types), see [SymbolicToPure.translate_type_decls]. *)
+let failed_type_ids () : string TypeDeclId.TreeMap.t =
+  List.fold_left
+    (fun m (r : Errors.item_failure_record) ->
+      if r.kind = "type" then
+        TypeDeclId.TreeMap.add (TypeDeclId.of_int r.def_id) r.rust_name m
+      else m)
+    TypeDeclId.TreeMap.empty !Errors.item_failure_records
+
+(** The failed type declarations mentioned in the signature of [fdef]. *)
+let signature_blocked_by (fdef : fun_decl) : string list =
+  let failed = failed_type_ids () in
+  if TypeDeclId.TreeMap.is_empty failed then []
+  else
+    let acc = ref [] in
+    let visitor =
+      object
+        inherit [_] Charon.Types.iter_ty as super
+
+        method! visit_type_decl_ref env (r : type_decl_ref) =
+          (match TypeDeclId.TreeMap.find_opt r.id failed with
+          | Some name when not (List.mem name !acc) -> acc := name :: !acc
+          | _ -> ());
+          super#visit_type_decl_ref env r
+      end
+    in
+    List.iter (visitor#visit_ty ()) (fdef.signature.output :: fdef.signature.inputs);
+    List.rev !acc
+
 let translate_function_to_pure (trans_ctx : trans_ctx) (marked_ids : marked_ids)
     (pure_type_decls : Pure.type_decl Pure.TypeDeclId.Map.t)
     (pure_global_decls : Pure.global_decl Pure.GlobalDeclId.Map.t)
     (fun_sigs : SymbolicToPureCore.fun_sigs FunOrMethodId.Map.t)
     (fdef : fun_decl) : pure_fun_translation_no_loops option =
+  (* Opt-in tracing ([AENEAS_MEMTRACE] set): which function is being translated,
+     with its size, duration and the major heap size, to find the dominant
+     allocation when a run exceeds its memory cap. *)
+  let memtrace = Sys.getenv_opt "AENEAS_MEMTRACE" <> None in
+  let heap_mib () =
+    (Gc.quick_stat ()).heap_words * (Sys.word_size / 8) / (1 lsl 20)
+  in
+  let start = Unix.gettimeofday () in
+  if memtrace then
+    Printf.eprintf "memtrace start %s size=%d heap=%dMiB\n%!"
+      (name_to_string trans_ctx fdef.item_meta.name)
+      (LlbcAstUtils.compute_fun_decl_size fdef)
+      (heap_mib ());
+  let finish () =
+    if memtrace then
+      Printf.eprintf "memtrace done %.1fs heap=%dMiB\n%!"
+        (Unix.gettimeofday () -. start)
+        (heap_mib ())
+  in
+  Fun.protect ~finally:finish @@ fun () ->
   try
     Some
       (translate_function_to_pure_aux trans_ctx marked_ids pure_type_decls
          pure_global_decls fun_sigs fdef)
-  with CFailure error ->
+  with exn when Errors.is_item_failure exn ->
+    let error = Errors.to_item_failure exn in
     let name = name_to_string trans_ctx fdef.item_meta.name in
     let name_pattern =
       try
@@ -301,7 +352,20 @@ let translate_function_to_pure (trans_ctx : trans_ctx) (marked_ids : marked_ids)
      ^ "\nDefinition span: "
       ^ Errors.raw_span_to_string fdef.item_meta.span
       ^ compute_local_uses_error_message trans_ctx (IdFun fdef.def_id));
-    None
+    Errors.record_item_failure ~kind:"fun" ~rust_name:name
+      ~def_id:(FunDeclId.to_int fdef.def_id)
+      ~blocked_by:(signature_blocked_by fdef)
+      error;
+    (* Keep the declaration as an opaque function (with the same signature) so
+       that its callers still refer to a declared name. *)
+    if LlbcAstUtils.body_is_translatable fdef.body then
+      try
+        Some
+          (translate_function_to_pure_aux trans_ctx marked_ids pure_type_decls
+             pure_global_decls fun_sigs
+             { fdef with body = OpaqueBody })
+      with exn when Errors.is_item_failure exn -> None
+    else None
 
 type translated_crate = {
   type_decls : Pure.type_decl list;
@@ -341,7 +405,8 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
               let g = SymbolicToPure.translate_global trans_ctx global in
               report 1;
               Some g
-            with CFailure error ->
+            with exn when Errors.is_item_failure exn ->
+              let error = Errors.to_item_failure exn in
               let name = name_to_string trans_ctx global.item_meta.name in
               let name_pattern =
                 try
@@ -358,6 +423,9 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
                 ^ Errors.raw_span_to_string global.item_meta.span
                 ^ compute_local_uses_error_message trans_ctx
                     (IdGlobal global.def_id));
+              Errors.record_item_failure ~kind:"global" ~rust_name:name
+                ~def_id:(GlobalDeclId.to_int global.def_id)
+                error;
               None)
           (GlobalDeclId.Map.values trans_ctx.global_decls_to_extract))
   in
@@ -378,7 +446,8 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
             let open SymbolicToPureTypes in
             let sg = translate_fun_sigs_from_decl trans_ctx fdef in
             Some (FunOrMethodId.Fun fdef.def_id, sg)
-          with CFailure error ->
+          with exn when Errors.is_item_failure exn ->
+            let error = Errors.to_item_failure exn in
             let name = name_to_string trans_ctx fdef.item_meta.name in
             let name_pattern =
               try
@@ -393,6 +462,10 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
              ^ "'" ^ "\nDefinition span: "
               ^ Errors.raw_span_to_string fdef.item_meta.span
               ^ compute_local_uses_error_message trans_ctx (IdFun fdef.def_id));
+            Errors.record_item_failure ~kind:"fun" ~rust_name:name
+              ~def_id:(FunDeclId.to_int fdef.def_id)
+              ~blocked_by:(signature_blocked_by fdef)
+              error;
             None)
         (FunDeclId.Map.values trans_ctx.fun_ctx.to_extract)
     in
@@ -401,18 +474,33 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
       let translate_method_sig (trait_decl : LlbcAst.trait_decl)
           (method_id : TraitMethodId.id)
           (bound_method : LlbcAst.trait_method Types.binder) =
-        let sg =
-          SymbolicToPureTypes.translate_flat_trait_method_sigs trans_ctx
-            trait_decl method_id bound_method
-        in
-        (FunOrMethodId.Method (trait_decl.def_id, method_id), sg)
+        try
+          let sg =
+            SymbolicToPureTypes.translate_flat_trait_method_sigs trans_ctx
+              trait_decl method_id bound_method
+          in
+          Some (FunOrMethodId.Method (trait_decl.def_id, method_id), sg)
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
+          let name =
+            name_to_string trans_ctx trait_decl.item_meta.name
+            ^ "::" ^ TraitMethodId.to_string method_id
+          in
+          [%warn_opt_span] error.span
+            ("Could not translate the signature of method '" ^ name
+           ^ "' because of previous error\nDefinition span: "
+            ^ Errors.raw_span_to_string trait_decl.item_meta.span);
+          Errors.record_item_failure ~kind:"trait_decl" ~rust_name:name
+            ~def_id:(TraitDeclId.to_int trait_decl.def_id)
+            error;
+          None
       in
       let translate_trait_methods (trait_decl : LlbcAst.trait_decl) =
         let methods =
           TraitDeclId.Map.find trait_decl.def_id
             trans_ctx.trait_methods_to_extract
         in
-        List.map
+        List.filter_map
           (fun (method_id, bound_method) ->
             translate_method_sig trait_decl method_id bound_method)
           (TraitMethodId.Map.to_list methods)
@@ -538,7 +626,8 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
               let d = SymbolicToPure.translate_trait_decl trans_ctx d in
               report 1;
               Some d
-            with CFailure error ->
+            with exn when Errors.is_item_failure exn ->
+              let error = Errors.to_item_failure exn in
               let name = name_to_string trans_ctx d.item_meta.name in
               let name_pattern =
                 try
@@ -555,6 +644,9 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
                 ^ Errors.raw_span_to_string d.item_meta.span
                 ^ compute_local_uses_error_message trans_ctx
                     (IdTraitDecl d.def_id));
+              Errors.record_item_failure ~kind:"trait_decl" ~rust_name:name
+                ~def_id:(TraitDeclId.to_int d.def_id)
+                error;
               None)
           (TraitDeclId.Map.values trans_ctx.trait_decls_to_extract))
   in
@@ -570,7 +662,8 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
               let d = SymbolicToPure.translate_trait_impl trans_ctx d in
               report 1;
               Some d
-            with CFailure error ->
+            with exn when Errors.is_item_failure exn ->
+              let error = Errors.to_item_failure exn in
               let name = name_to_string trans_ctx d.item_meta.name in
               let name_pattern =
                 try
@@ -587,6 +680,9 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
                 ^ Errors.raw_span_to_string d.item_meta.span
                 ^ compute_local_uses_error_message trans_ctx
                     (IdTraitImpl d.def_id));
+              Errors.record_item_failure ~kind:"trait_impl" ~rust_name:name
+                ~def_id:(TraitImplId.to_int d.def_id)
+                error;
               None)
           (TraitImplId.Map.values trans_ctx.trait_impls_to_extract))
   in
@@ -1081,32 +1177,33 @@ let trait_impl_is_builtin (ctx : gen_ctx) (id : Pure.trait_impl_id) : bool =
 let export_trait_decl (fmt : Format.formatter) (_config : gen_config)
     (ctx : gen_ctx) (trait_decl_id : Pure.trait_decl_id) (extract_decl : bool)
     (extract_extra_info : bool) : unit =
-  let trait_decl =
-    [%silent_unwrap_opt_span] None
-      (TraitDeclId.Map.find_opt trait_decl_id ctx.trans_trait_decls)
-  in
-  (* Check if the trait declaration is builtin, in which case we ignore it *)
-  if not (trait_decl_is_builtin ctx trait_decl_id) then (
-    let ctx = { ctx with trait_decl_id = Some trait_decl.def_id } in
-    if extract_decl then (
-      Extract.extract_trait_decl ctx fmt trait_decl;
-      EmitJson.record_trait_decl_if_enabled ctx trait_decl);
-    if extract_extra_info then
-      Extract.extract_trait_decl_extra_info ctx fmt trait_decl)
-  else ()
+  match TraitDeclId.Map.find_opt trait_decl_id ctx.trans_trait_decls with
+  | None ->
+      (* The translation failed (the failure is already reported) *)
+      ()
+  | Some trait_decl ->
+      (* Check if the trait declaration is builtin, in which case we ignore it *)
+      if not (trait_decl_is_builtin ctx trait_decl_id) then (
+        let ctx = { ctx with trait_decl_id = Some trait_decl.def_id } in
+        if extract_decl then (
+          Extract.extract_trait_decl ctx fmt trait_decl;
+          EmitJson.record_trait_decl_if_enabled ctx trait_decl);
+        if extract_extra_info then
+          Extract.extract_trait_decl_extra_info ctx fmt trait_decl)
 
 (** Export a trait implementation. *)
 let export_trait_impl (fmt : Format.formatter) (_config : gen_config)
     (ctx : gen_ctx) ~(is_rec : bool) (trait_impl_id : Pure.trait_impl_id) : unit
     =
   (* Lookup the definition *)
-  let trait_impl =
-    [%silent_unwrap_opt_span] None
-      (TraitImplId.Map.find_opt trait_impl_id ctx.trans_trait_impls)
-  in
-  if not (trait_impl_is_builtin ctx trait_impl_id) then (
-    Extract.extract_trait_impl ctx fmt ~is_rec trait_impl;
-    EmitJson.record_trait_impl_if_enabled ctx trait_impl)
+  match TraitImplId.Map.find_opt trait_impl_id ctx.trans_trait_impls with
+  | None ->
+      (* The translation failed (the failure is already reported) *)
+      ()
+  | Some trait_impl ->
+      if not (trait_impl_is_builtin ctx trait_impl_id) then (
+        Extract.extract_trait_impl ctx fmt ~is_rec trait_impl;
+        EmitJson.record_trait_impl_if_enabled ctx trait_impl)
 
 (** A generic utility to generate the extracted definitions: as we may want to
     split the definitions between different files (or not), we can control what
@@ -1271,9 +1368,11 @@ let extract_definitions (fmt : Format.formatter) (config : gen_config)
   List.iter
     (fun g ->
       try export_decl_group g
-      with CFailure _ ->
-        (* An exception was raised: ignore it *)
-        ())
+      with exn when Errors.is_item_failure exn ->
+        (* An exception was raised: record it and continue with the other groups *)
+        let error = Errors.to_item_failure exn in
+        Errors.record_item_failure ~kind:"decl_group"
+          ~rust_name:"<declaration group>" ~def_id:(-1) error)
     (Option.get ctx.crate.declarations)
 
 type extract_file_info = {
@@ -1579,7 +1678,8 @@ let extract_translated_crate (filename : string) (dest_dir : string)
     List.fold_left
       (fun ctx def ->
         try Extract.extract_type_decl_register_names ctx def
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           (* An exception was raised: ignore it *)
           let name = name_to_string trans_ctx def.item_meta.name in
           let name_pattern =
@@ -1618,7 +1718,8 @@ let extract_translated_crate (filename : string) (dest_dir : string)
              [extract_global_decl_register_names] - but still registers the
              loops/bodies, which are ordinary auxiliary functions. *)
           Extract.extract_fun_decl_register_names ctx gen_decr_clause trans
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           (* An exception was raised: ignore it *)
           let name = name_to_string trans_ctx trans.f.item_meta.name in
           let name_pattern =
@@ -1644,7 +1745,8 @@ let extract_translated_crate (filename : string) (dest_dir : string)
     List.fold_left
       (fun ctx def ->
         try Extract.extract_global_decl_register_names ctx def
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           (* An exception was raised: ignore it *)
           let name = name_to_string trans_ctx def.item_meta.name in
           let name_pattern =
@@ -1668,7 +1770,8 @@ let extract_translated_crate (filename : string) (dest_dir : string)
     List.fold_left
       (fun ctx def ->
         try Extract.extract_trait_decl_register_names ctx def
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           (* An exception was raised: ignore it *)
           let name = name_to_string trans_ctx def.item_meta.name in
           let name_pattern =
@@ -1693,7 +1796,8 @@ let extract_translated_crate (filename : string) (dest_dir : string)
     List.fold_left
       (fun ctx def ->
         try Extract.extract_trait_impl_register_names ctx def
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           (* An exception was raised: ignore it *)
           let name = name_to_string trans_ctx def.item_meta.name in
           let name_pattern =
