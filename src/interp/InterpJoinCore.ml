@@ -755,9 +755,12 @@ let tavalue_add_marker (span : Meta.span) (ctx : eval_ctx) (pm : proj_marker)
         ASymbolic (pm, aproj)
 
       method! visit_symbolic_value _ sv =
-        (* Symbolic values can appear in shared values *)
+        (* Symbolic values can appear in shared values: they may contain shared
+           borrows (e.g., the static borrows hidden in [Cow<'static, str>]) *)
         [%sanity_check] span
-          (not (symbolic_value_has_borrows (Some span) ctx sv));
+          (not
+             (ValuesUtils.symbolic_value_has_mut_borrows (Some span)
+                ctx.type_ctx.type_infos sv));
         sv
 
       method! visit_aloan_content env lc =
@@ -809,9 +812,12 @@ let tevalue_add_marker (span : Meta.span) (ctx : eval_ctx) (pm : proj_marker)
         ESymbolic (pm, aproj)
 
       method! visit_symbolic_value _ sv =
-        (* Symbolic values can appear in shared values *)
+        (* Symbolic values can appear in shared values (see
+           [tavalue_add_marker]) *)
         [%sanity_check] span
-          (not (symbolic_value_has_borrows (Some span) ctx sv));
+          (not
+             (ValuesUtils.symbolic_value_has_mut_borrows (Some span)
+                ctx.type_ctx.type_infos sv));
         sv
 
       method! visit_eloan_content ty lc =

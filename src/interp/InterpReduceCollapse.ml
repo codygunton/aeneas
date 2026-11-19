@@ -1198,14 +1198,16 @@ let mk_collapse_ctx_merge_duplicate_funs (span : Meta.span)
   in
 
   let merge_ashared_borrows id ty0 _pm0 _ ty1 _pm1 _ : tavalue =
-    (* Sanity checks *)
+    (* Sanity checks: the borrowed values may contain shared borrows (nested
+       shared borrows, see {!InterpBorrows.destructure_abs}), but no mutable
+       borrows *)
     let _ =
       let _, ty0, _ = ty_as_ref ty0 in
       let _, ty1, _ = ty_as_ref ty1 in
       [%sanity_check] span
-        (not (ty_has_borrows (Some span) ctx.type_ctx.type_infos ty0));
+        (not (ty_has_mut_borrows_under_borrows ctx.type_ctx.type_infos ty0));
       [%sanity_check] span
-        (not (ty_has_borrows (Some span) ctx.type_ctx.type_infos ty1))
+        (not (ty_has_mut_borrows_under_borrows ctx.type_ctx.type_infos ty1))
     in
 
     (* Same remarks as for [merge_amut_borrows] *)

@@ -545,9 +545,22 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
                symbolic values whose type contains shared borrows (for
                instance the static borrows hidden in [Cow<'static, str>]) *)
             [%sanity_check_recover] M.recover M.span
-              (not
-                 (ValuesUtils.value_has_loans_or_borrows (Some span)
-                    ctx0.type_ctx.type_infos sv.value));
+              (let visitor =
+                 object
+                   inherit [_] iter_tvalue
+                   method! visit_borrow_content _ _ = raise Utils.Found
+
+                   method! visit_symbolic_value _ sv =
+                     if
+                       ValuesUtils.symbolic_value_has_mut_borrows (Some span)
+                         ctx0.type_ctx.type_infos sv
+                     then raise Utils.Found
+                 end
+               in
+               try
+                 visitor#visit_tvalue () sv;
+                 true
+               with Utils.Found -> false);
             M.match_ashared_loans match_rec ctx0 ctx1 v0.ty pm0 id0 sv0 av0
               v1.ty pm1 id1 sv1 av1 ty sv av
         | AMutLoan (pm0, id0, av0), AMutLoan (pm1, id1, av1) ->
