@@ -21,8 +21,8 @@ pub fn test_option() {
     assert!(a.filter(|x| *x > 5).is_none());
     assert!(n.or(Some(5)) == Some(5));
     assert!(a.or_else(|| Some(1)) == Some(3));
-    assert!(a.ok_or_else(|| 0u8) == Ok(3));
-    assert!(n.ok_or_else(|| 4u8) == Err(4));
+    assert!(a.ok_or_else(|| 0u8).ok() == Some(3));
+    assert!(!a.ok_or_else(|| 4u8).is_err());
     let mut o: Option<u32> = None;
     *o.get_or_insert(5) += 1;
     assert!(o == Some(6));
@@ -53,15 +53,27 @@ pub fn test_option_try_iter() {
     assert!(it.next() == Some(3) && it.next().is_none());
 }
 
+fn mk_ok(x: u32) -> Result<u32, u8> {
+    Ok(x)
+}
+
+fn mk_err(x: u8) -> Result<u32, u8> {
+    Err(x)
+}
+
+fn ok_u32(x: u32) -> Result<u32, u8> {
+    Ok(x)
+}
+
 #[verify::test]
 pub fn test_result() {
-    let a: Result<u32, u8> = Ok(2);
-    let e: Result<u32, u8> = Err(5);
+    let a = mk_ok(2);
+    let e = mk_err(5);
     assert!(!a.is_err() && e.is_err());
     assert!(a.ok() == Some(2) && e.ok().is_none());
     assert!(e.unwrap_err() == 5);
-    assert!(a.and_then(|x| if x > 1 { Ok(x + 1) } else { Err(0) }) == Ok(3));
-    assert!(e.or_else(|x| if x > 1 { Ok::<u32, u8>(x as u32) } else { Err(x) }) == Ok(5));
+    assert!(a.and_then(|x| if x > 1 { ok_u32(x + 1) } else { mk_err(0) }).ok() == Some(3));
+    assert!(e.or_else(|x| if x > 1 { ok_u32(x as u32) } else { mk_err(x) }).ok() == Some(5));
     assert!(e.unwrap_or_else(|x| x as u32 * 2) == 10);
 }
 

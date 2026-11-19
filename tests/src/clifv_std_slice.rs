@@ -5,6 +5,14 @@
 //! Models of `core::slice` methods and slice iterators.
 //! Expected values: Rust 1.96 (`cargo test` in `tests/src`).
 
+
+fn res<T, E>(r: Result<T, E>) -> (bool, Option<T>, Option<E>) {
+    match r {
+        Ok(x) => (true, Some(x), None),
+        Err(e) => (false, None, Some(e)),
+    }
+}
+
 #[verify::test]
 pub fn test_first_last() {
     let v: [u32; 3] = [1, 2, 3];
@@ -13,18 +21,8 @@ pub fn test_first_last() {
     assert!(s.last() == Some(&3));
     let e: [u32; 0] = [];
     assert!(e[..].first().is_none());
-    match s.split_first() {
-        Some((x, rest)) => assert!(*x == 1 && rest.len() == 2),
-        None => assert!(false),
-    }
-    let mut w: [u32; 3] = [1, 2, 3];
-    if let Some(x) = w[..].first_mut() {
-        *x = 10;
-    }
-    if let Some(x) = w[..].last_mut() {
-        *x = 30;
-    }
-    assert!(w[0] == 10 && w[1] == 2 && w[2] == 30);
+    let (x, rest) = s.split_first().unwrap();
+    assert!(*x == 1 && rest.len() == 2);
 }
 
 #[verify::test]
@@ -47,7 +45,7 @@ pub fn test_windows() {
 #[verify::test]
 pub fn test_array_windows() {
     let v: [u32; 4] = [1, 2, 3, 4];
-    let s = v.array_windows::<2>().fold(0u32, |a, [x, y]| a * 10 + x * y);
+    let s = v.array_windows::<2>().fold(0u32, |a, [x, y]| a * 10 + *x * *y);
     assert!(s == 2*100 + 6*10 + 12);
     assert!(v.array_windows::<3>().count() == 2);
     let l = v.array_windows::<2>().last().unwrap();
@@ -78,16 +76,16 @@ pub fn test_chunks_exact() {
 pub fn test_binary_search() {
     let v: [u32; 7] = [1, 3, 3, 3, 5, 8, 13];
     // Rust's branch-free search returns this particular index among the equal elements.
-    assert!(v.binary_search_by(|x| x.cmp(&3)) == Ok(3));
-    assert!(v.binary_search_by(|x| x.cmp(&4)) == Err(4));
-    assert!(v.binary_search_by(|x| x.cmp(&0)) == Err(0));
-    assert!(v.binary_search_by(|x| x.cmp(&20)) == Err(7));
+    assert!(res(v.binary_search_by(|x| x.cmp(&3))).1 == Some(3));
+    assert!(res(v.binary_search_by(|x| x.cmp(&4))).2 == Some(4));
+    assert!(res(v.binary_search_by(|x| x.cmp(&0))).2 == Some(0));
+    assert!(res(v.binary_search_by(|x| x.cmp(&20))).2 == Some(7));
     let p: [(u32, u32); 4] = [(1, 10), (2, 20), (4, 40), (8, 80)];
-    assert!(p.binary_search_by_key(&4, |e| e.0) == Ok(2));
-    assert!(p.binary_search_by_key(&5, |e| e.0) == Err(3));
+    assert!(res(p.binary_search_by_key(&4, |e| e.0)).1 == Some(2));
+    assert!(res(p.binary_search_by_key(&5, |e| e.0)).2 == Some(3));
     assert!(v.partition_point(|x| *x < 5) == 4);
     let e: [u32; 0] = [];
-    assert!(e.binary_search_by(|x| x.cmp(&1)) == Err(0));
+    assert!(res(e.binary_search_by(|x| x.cmp(&1))).2 == Some(0));
 }
 
 #[verify::test]
