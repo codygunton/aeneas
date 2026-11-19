@@ -87,12 +87,8 @@ def NestedStaticRef := Std.U8
 def join_nested_shared_input
   (_m : NestedStaticRef) (a : Bool) : Result Unit := do
   if a
-  then if a
-       then ok ()
-       else ok ()
-  else if a
-       then ok ()
-       else ok ()
+  then ok ()
+  else ok ()
 
 /-- [join_duplicate::join_nested_shared_input_generic]:
     Source: 'tests/src/join-duplicate.rs', lines 46:0-49:1
@@ -100,11 +96,7 @@ def join_nested_shared_input
 def join_nested_shared_input_generic
   (_m : Std.U8) (a : Bool) : Result Unit := do
   if a
-  then if a
-       then ok ()
-       else ok ()
-  else if a
-       then ok ()
-       else ok ()
+  then ok ()
+  else ok ()
 
 end join_duplicate
