@@ -10,10 +10,29 @@ module T = Types
 (** Print a string literal (without any conversion to [str]) *)
 let extract_pure_string (fmt : F.formatter) (s : string) : unit =
   let chars = StringUtils.string_to_chars s in
-  (* Using the OCaml escape conventions for now.
+  let escape (c : char) : string =
+    match backend () with
+    | Lean -> (
+        (* Lean string literals are UTF-8 (non-ASCII bytes are kept as is) and
+           only accept the backslash escapes for backslash, quotes, n, t, r,
+           xHH and uHHHH: OCaml's decimal escapes and an escaped single quote
+           are rejected. *)
+        match c with
+        | '\\' -> "\\\\"
+        | '"' -> "\\\""
+        | '\n' -> "\\n"
+        | '\t' -> "\\t"
+        | '\r' -> "\\r"
+        | c when Char.code c < 0x20 || Char.code c = 0x7f ->
+            Printf.sprintf "\\x%02x" (Char.code c)
+        | c -> String.make 1 c)
+    | FStar | Coq | HOL4 ->
+        (* Using the OCaml escape conventions for now.
 
-     TODO: does this really work? *)
-  let s = String.concat "" (List.map Char.escaped chars) in
+           TODO: does this really work? *)
+        Char.escaped c
+  in
+  let s = String.concat "" (List.map escape chars) in
   F.pp_print_string fmt ("\"" ^ s ^ "\"")
 
 let extract_str (_span : Meta.span) (fmt : F.formatter) ~(inside : bool)
@@ -345,6 +364,7 @@ let extract_literal_type (_ctx : extraction_ctx) (fmt : F.formatter)
     ]} *)
 
 let extract_ty_errors (fmt : F.formatter) : unit =
+  incr Errors.extracted_admits;
   match Config.backend () with
   | FStar | Coq -> F.pp_print_string fmt "admit"
   | Lean -> F.pp_print_string fmt "sorry"

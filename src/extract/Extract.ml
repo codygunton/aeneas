@@ -740,6 +740,7 @@ let extract_binop (span : Meta.span) (ctx : extraction_ctx)
     - match/if scrutinee: [if exp then _ else _]/[match exp | _ -> _] *)
 
 let extract_texpr_errors (fmt : F.formatter) =
+  incr Errors.extracted_admits;
   match backend () with
   | FStar | Coq -> F.pp_print_string fmt "admit"
   | Lean -> F.pp_print_string fmt "sorry"
@@ -1046,8 +1047,12 @@ and extract_function_call (span : Meta.span) (ctx : extraction_ctx)
               let trans_fun =
                 match lp_id with
                 | None -> trans_fun.f
-                | Some (lp_id, true) -> Pure.LoopId.nth trans_fun.bodies lp_id
-                | Some (lp_id, false) -> Pure.LoopId.nth trans_fun.loops lp_id
+                | Some _ ->
+                    (* The loop ids are not the positions in the lists: some
+                       loops have no decomposed body *)
+                    List.find
+                      (fun (d : fun_decl) -> d.loop_id = lp_id)
+                      (trans_fun.loops @ trans_fun.bodies)
               in
               let explicit = trans_fun.signature.explicit_info in
               Some (adjust_explicit_info explicit false generics)
@@ -1431,7 +1436,40 @@ and extract_lets (span : Meta.span) (ctx : extraction_ctx) (fmt : F.formatter)
           | Lean -> false
           | _ -> monadic
         in
+        (* Lean elaborates the branches of a conditional before their common
+           type is known: a branch returning a comparison ([ok (x < y)]) then
+           makes the bound value a [Prop], and a branch returning a polymorphic
+           constructor ([ok (some none, 2#u32)]) leaves metavariables in the
+           type. Ascribe the type of such bound conditionals. *)
+        let ascribe =
+          let rec strip_meta (e : texpr) =
+            match e.e with
+            | Meta (_, e) -> strip_meta e
+            | _ -> e
+          in
+          let rec needs_ascription (ty : ty) =
+            match ty with
+            | TLiteral TBool -> true
+            | TAdt (TAdtId _, generics) when generics.types <> [] -> true
+            | TAdt (_, generics) -> List.exists needs_ascription generics.types
+            | TArrow (t0, t1) -> needs_ascription t0 || needs_ascription t1
+            | _ -> false
+          in
+          backend () = Lean && monadic
+          && (match (strip_meta re).e with
+             | Switch _ -> true
+             | _ -> false)
+          && needs_ascription lv.ty
+        in
+        if ascribe then F.pp_print_string fmt "(";
         extract_texpr span ctx fmt ~inside:false ~inside_do:inside_do_rhs re;
+        if ascribe then (
+          F.pp_print_space fmt ();
+          F.pp_print_string fmt ":";
+          F.pp_print_space fmt ();
+          extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside:false
+            (mk_result_ty lv.ty);
+          F.pp_print_string fmt ")");
         F.pp_close_box fmt ();
         (ctx, end_let)
     in
@@ -1864,7 +1902,12 @@ let extract_fun_parameters (space : bool ref) (ctx : extraction_ctx)
 let extract_fun_input_parameters_types (span : span) (ctx : extraction_ctx)
     (fmt : F.formatter) (inputs : ty list) : unit =
   let extract_param (ty : ty) : unit =
-    let inside = false in
+    (* An arrow-typed input needs parentheses: arrows associate to the right *)
+    let inside =
+      match ty with
+      | TArrow _ -> true
+      | _ -> false
+    in
     extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside ty;
     F.pp_print_space fmt ();
     extract_arrow fmt ();
@@ -2117,9 +2160,16 @@ let extract_fun_comment (ctx : extraction_ctx) (fmt : F.formatter)
     This function is for all function declarations and all backends **at the
     exception** of opaque (builtin/declared) functions for HOL4.
 
+    [stub] (Lean only): [def] has no body because its translation or extraction
+    failed. We emit an [opaque] declaration whose (compiled) implementation
+    fails with [Error.undef], so that the callers stay executable.
+
     See {!extract_fun_decl}. *)
-let extract_fun_decl_gen (ctx : extraction_ctx) (fmt : F.formatter)
-    (kind : decl_kind) (has_decreases_clause : bool) (def : fun_decl) : unit =
+let extract_fun_decl_gen ?(stub : bool = false) (ctx : extraction_ctx)
+    (fmt : F.formatter) (kind : decl_kind) (has_decreases_clause : bool)
+    (def : fun_decl) : unit =
+  [%sanity_check] def.item_meta.span
+    ((not stub) || (backend () = Lean && Option.is_none def.body));
   [%sanity_check] def.item_meta.span (not def.is_global_decl_body);
   (* Retrieve the function name *)
   let def_name =
@@ -2149,7 +2199,9 @@ let extract_fun_decl_gen (ctx : extraction_ctx) (fmt : F.formatter)
   F.pp_open_hvbox fmt 0;
   (* Extract the attributes *)
   let rust_attributes =
-    if backend () = Lean then
+    (* A stub is an [opaque] constant: the loop attributes (which register
+       unfolding lemmas) do not apply to it *)
+    if backend () = Lean && not stub then
       match def.loop_id with
       | None -> []
       | Some (_, false) -> [ "rust_loop" ]
@@ -2191,7 +2243,7 @@ let extract_fun_decl_gen (ctx : extraction_ctx) (fmt : F.formatter)
     is_opaque_coq && def.signature.generics <> empty_generic_params
   in
   (* Print the qualifier ("assume", etc.). *)
-  let qualif = fun_decl_kind_to_qualif kind in
+  let qualif = if stub then Some "opaque" else fun_decl_kind_to_qualif kind in
   (match qualif with
   | Some qualif ->
       F.pp_print_string fmt qualif;
@@ -2309,7 +2361,18 @@ let extract_fun_decl_gen (ctx : extraction_ctx) (fmt : F.formatter)
       | Coq -> ":="
       | Lean -> ":= do"
     in
-    F.pp_print_string fmt eq);
+    F.pp_print_string fmt eq)
+  else if stub && is_monadic_ty def.signature.output then (
+    (* [:= fun _ ... _ => fail .undef] (otherwise, Lean uses [default]) *)
+    F.pp_print_space fmt ();
+    F.pp_print_string fmt ":=";
+    F.pp_print_space fmt ();
+    if def.signature.inputs <> [] then (
+      F.pp_print_string fmt "fun";
+      List.iter (fun _ -> F.pp_print_string fmt " _") def.signature.inputs;
+      F.pp_print_string fmt " =>";
+      F.pp_print_space fmt ());
+    F.pp_print_string fmt "fail .undef");
   (* Close the box for "(PARAMS) : EFFECT =" *)
   F.pp_close_box fmt ();
   (* Close the box for "let FUN_NAME (PARAMS) : EFFECT =" *)
@@ -2489,13 +2552,14 @@ let extract_fun_decl_hol4_opaque (ctx : extraction_ctx) (fmt : F.formatter)
 
     This function should be inserted between calls to {!start_fun_decl_group}
     and {!end_fun_decl_group}. *)
-let extract_fun_decl (ctx : extraction_ctx) (fmt : F.formatter)
-    (kind : decl_kind) (has_decreases_clause : bool) (def : fun_decl) : unit =
+let extract_fun_decl ?(stub : bool = false) (ctx : extraction_ctx)
+    (fmt : F.formatter) (kind : decl_kind) (has_decreases_clause : bool)
+    (def : fun_decl) : unit =
   [%sanity_check] def.item_meta.span (not def.is_global_decl_body);
   (* We treat HOL4 opaque functions in a specific manner *)
   if backend () = HOL4 && Option.is_none def.body then
     extract_fun_decl_hol4_opaque ctx fmt def
-  else extract_fun_decl_gen ctx fmt kind has_decreases_clause def
+  else extract_fun_decl_gen ~stub ctx fmt kind has_decreases_clause def
 
 (** Extract a global declaration body of the shape "QUALIF NAME : TYPE = BODY"
     with a custom body extractor.

@@ -1,0 +1,90 @@
+[[92mInfo[39m ] Imported: tests/llbc/clifv_stub_failed_items.llbc
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[93mWarn[39m ] Could not translate the function signature of 'clifv_stub_failed_items::{impl clifv_stub_failed_items::Bad for clifv_stub_failed_items::Point}::apply because of previous error
+Name pattern: 'clifv_stub_failed_items::{clifv_stub_failed_items::Bad<clifv_stub_failed_items::Point>}::apply'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: Translate.ml, line 459
+
+[[91mError[39m] Arrow types are not supported yet
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: symbolic/SymbolicToPureTypes.ml, line 540
+[[93mWarn[39m ] Could not translate the function signature of 'clifv_stub_failed_items::{impl core::ops::function::FnOnce<(u8,), &'static str> for clifv_stub_failed_items::label}::call_once because of previous error
+Name pattern: 'clifv_stub_failed_items::{core::ops::function::FnOnce<@, (u8), &'static str>}::call_once'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: Translate.ml, line 459
+
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 32:0-34:1
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[93mWarn[39m ] Could not translate the signature of method 'clifv_stub_failed_items::Bad::0' because of previous error
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 32:0-34:1
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 32:0-34:1
+Compiler source: Translate.ml, line 489
+
+[[91mError[39m] Aeneas does not yet support dereferencing raw pointers.
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 14:13-14:34
+Compiler source: interp/InterpPaths.ml, line 197
+[[93mWarn[39m ] Could not translate the body of function 'clifv_stub_failed_items::read_via_ptr because of previous error
+Name pattern: 'clifv_stub_failed_items::read_via_ptr'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 13:0-15:1
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 14:13-14:34
+Compiler source: interp/Interp.ml, line 741
+
+[[91mError[39m] Arrow types are not supported yet
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 60:0-62:1
+Compiler source: symbolic/SymbolicToPureTypes.ml, line 540
+[[91mError[39m] Unsupported operation: &raw const (*_2)
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 23:36-23:41
+Compiler source: interp/InterpExpressions.ml, line 1526
+[[93mWarn[39m ] Could not translate the body of function 'clifv_stub_failed_items::FAILED because of previous error
+Name pattern: 'clifv_stub_failed_items::FAILED'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 23:0-23:59
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 23:36-23:41
+Compiler source: interp/Interp.ml, line 741
+
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[93mWarn[39m ] Could not translate the function 'clifv_stub_failed_items::{impl clifv_stub_failed_items::Bad for clifv_stub_failed_items::Point}::apply because of previous error.
+Name pattern: 'clifv_stub_failed_items::{clifv_stub_failed_items::Bad<clifv_stub_failed_items::Point>}::apply'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: Translate.ml, line 349
+
+[[91mError[39m] Internal error: please file an issue
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: Translate.ml, line 192
+[[91mError[39m] Arrow types are not supported yet
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: symbolic/SymbolicToPureTypes.ml, line 540
+[[91mError[39m] Internal error: please file an issue
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: Translate.ml, line 192
+[[93mWarn[39m ] Could not translate the function 'clifv_stub_failed_items::{impl core::ops::function::FnOnce<(u8,), &'static str> for clifv_stub_failed_items::label}::call_once because of previous error.
+Name pattern: 'clifv_stub_failed_items::{core::ops::function::FnOnce<@, (u8), &'static str>}::call_once'
+Definition span: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: Translate.ml, line 349
+
+[[91mError[39m] Internal error: please file an issue
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: Translate.ml, line 192
+[[91mError[39m] We don't support arrow types with locally quantified regions
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 41:4-43:5
+Compiler source: llbc/RegionsHierarchy.ml, line 289
+[[91mError[39m] Arrow types are not supported yet
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: symbolic/SymbolicToPureTypes.ml, line 540
+[[91mError[39m] Reference to an item whose extraction failed: clifv_stub_failed_items::FAILED
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 26:0-28:1
+Compiler source: extract/ExtractBase.ml, line 478
+[[91mError[39m] Could not lookup the translated function, probably because of an error which happened before
+Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
+Compiler source: extract/Extract.ml, line 3498
+[[92mInfo[39m ] Generated the partial file (because of 15 errors, including 7 unique errors): tests/lean/ClifvStubFailedItems.lean
+[[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
+[[92mInfo[39m ] Total execution time: 0.324146 seconds

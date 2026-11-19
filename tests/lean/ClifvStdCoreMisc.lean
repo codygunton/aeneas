@@ -403,9 +403,9 @@ def test_option : Result Unit := do
   massert b9
   let (o8, as_mut_back) ← core.option.Option.as_mut o7
   let o9 ←
-    match o8 with
-    | none => ok (as_mut_back none)
-    | some _ => ok (as_mut_back (some 11#u32))
+    (match o8 with
+     | none => ok (as_mut_back none)
+     | some _ => ok (as_mut_back (some 11#u32)) : Result (Option Std.U32))
   let o10 ← core.option.Option.as_ref o9
   let b10 ←
     core.option.Option.Insts.CoreCmpPartialEqOption.eq

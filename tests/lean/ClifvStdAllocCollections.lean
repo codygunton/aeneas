@@ -358,11 +358,14 @@ def test_btree_map : Result Unit := do
     alloc.collections.btree.map.ValuesMut.Insts.CoreIterTraitsIteratorIteratorMutAV.next
       vm
   let back ←
-    match o11 with
-    | none => ok (fun vm2 => next_back vm2 none)
-    | some v => do
-                let v2 ← v + 1#u32
-                ok (fun vm2 => next_back vm2 (some v2))
+    (match o11 with
+     | none => ok (fun vm2 => next_back vm2 none)
+     | some v =>
+       do
+       let v2 ← v + 1#u32
+       ok (fun vm2 => next_back vm2 (some v2)) : Result
+      (alloc.collections.btree.map.ValuesMut Std.U32 Std.U32 →
+      alloc.collections.btree.map.ValuesMut Std.U32 Std.U32))
   let vm2 := back vm1
   let m5 := values_mut_back vm2
   let o12 ←
@@ -511,9 +514,9 @@ def test_rc : Result Unit := do
   massert (i = 0#u32)
   let (o, get_mut_back) ← alloc.rc.Rc.get_mut alloc.alloc.Global r
   let r1 ←
-    match o with
-    | none => ok (get_mut_back none)
-    | some _ => ok (get_mut_back (some 4#u32))
+    (match o with
+     | none => ok (get_mut_back none)
+     | some _ => ok (get_mut_back (some 4#u32)) : Result (alloc.rc.Rc Std.U32))
   let r2 ←
     alloc.rc.Rc.Insts.CoreCloneClone.clone core.alloc.AllocatorCloneGlobal r1
   let i1 ← alloc.rc.Rc.Insts.CoreOpsDerefDeref.deref alloc.alloc.Global r2

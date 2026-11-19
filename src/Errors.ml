@@ -83,6 +83,11 @@ module FileLineMap = Collections.MakeMap (FileLineOrderedType)
 let error_list : (string * int * Meta.span option * string) list ref = ref []
 let unique_errors = ref FileLineMap.empty
 
+(** Number of placeholders ([sorry], [admit], ...) printed in the generated code
+    so far. The extraction compares it before and after printing a declaration
+    to detect the declarations that are not well-formed. *)
+let extracted_admits = ref 0
+
 (** Save an error and print it at the same time.
 
     We prefer printing errors gradually rather than reporting everyting at the

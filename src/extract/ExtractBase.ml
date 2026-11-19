@@ -451,6 +451,13 @@ let names_maps_add (id_to_string : id -> string) (id : id)
     let names_map = names_map_add id_to_string (id, span) name nm.names_map in
     { nm with strict_names_map; names_map }
 
+(** The items (types, globals, trait declarations and implementations) whose
+    extraction failed: their declaration groups are not in the generated files
+    (see [Translate.extract_definitions]). The declarations are extracted in
+    dependency order, so a reference to a dropped item is detected (and is an
+    error) when extracting the items which use it. *)
+let dropped_items : IdSet.t ref = ref IdSet.empty
+
 (** The [id_to_string] function to print nice debugging messages if there are
     collisions *)
 let names_maps_get (span : Meta.span option) (id_to_string : id -> string)
@@ -464,7 +471,15 @@ let names_maps_get (span : Meta.span option) (id_to_string : id -> string)
            (IdMap.bindings m))
     ^ "\n]"
   in
-  if allow_collisions id then
+  if IdSet.mem id !dropped_items then (
+    let err =
+      "Reference to an item whose extraction failed: " ^ id_to_string id
+    in
+    [%save_error_opt_span] span err;
+    match backend () with
+    | Lean -> "sorry /- " ^ err ^ "-/"
+    | _ -> "(ERROR: " ^ id_to_string id ^ ")")
+  else if allow_collisions id then
     let m = nm.unsafe_names_map.id_to_name in
     match IdMap.find_opt id m with
     | Some s -> s
@@ -1624,7 +1639,11 @@ let ctx_compute_variant_name (ctx : extraction_ctx) (def : type_decl)
           (ctx_compute_type_name_no_suffix ctx def.item_meta def.item_meta.name
           ^ "_" ^ variant)
       else variant
-  | Lean -> variant
+  | Lean ->
+      (* The methods of the enumeration are declared in its namespace, where a
+         constructor named [Result] would shadow the [Result] monad of their
+         signatures (Cranelift's [ValueDef::Result]) *)
+      if variant = "Result" then "Result_" else variant
 
 (** Structure constructors are used when constructing structure values.
 
@@ -1848,12 +1867,40 @@ let ctx_compute_trait_impl_name_raw (ctx : extraction_ctx)
                       name_with_generics_to_simple_name ctx.trans_ctx name
                         params generics
                       |> flatten_name)
-              | _ ->
+              | _ -> (
                   let name =
                     NameMatcher.ty_to_pattern nm_ctx
                       ExtractName.default_to_pat_config trait_impl.generics self
                   in
-                  name_matcher_expr_to_simple_name (Some span) name
+                  let name = name_matcher_expr_to_simple_name (Some span) name in
+                  (* A reference to an ADT is named after the ADT's last
+                     identifier only ([SharedAVec]), so impls for references to
+                     same-named ADTs of different crates collide (e.g.
+                     [&alloc::vec::Vec] and [&allocator_api2::stable::vec::Vec]).
+                     Outside the standard library, prefix the ADT's module
+                     path. The standard library names are unchanged: they are
+                     the names of the Lean library's models. *)
+                  match self with
+                  | TRef (_, TAdt { id; builtin = None; _ }, _) -> (
+                      match TypeDeclId.Map.find_opt id ctx.crate.type_decls with
+                      | Some
+                          {
+                            item_meta =
+                              { name = PeIdent (krate, _) :: _ as adt_name; _ };
+                            _;
+                          }
+                        when not (List.mem krate [ "core"; "alloc"; "std" ]) ->
+                          let adt_name =
+                            name_with_generics_to_simple_name ctx.trans_ctx
+                              adt_name Charon.TypesUtils.empty_generic_params
+                              Charon.TypesUtils.empty_generic_args
+                          in
+                          let module_path =
+                            List.rev (List.tl (List.rev adt_name))
+                          in
+                          flatten_name (module_path @ [ name ])
+                      | _ -> name)
+                  | _ -> name)
             in
 
             (* Generate the name for the trait *)
@@ -2052,7 +2099,12 @@ let ctx_compute_var_basename (span : Meta.span) (ctx : extraction_ctx)
   | Some basename -> (
       (* This should be a no-op *)
       match Config.backend () with
-      | Lean -> basename
+      | Lean ->
+          (* A variable named like a root of the qualified names of the
+             library would capture them ([alloc.vec.Vec.index] would project a
+             field from a variable [alloc]) *)
+          if List.mem basename [ "alloc"; "core"; "std" ] then basename ^ "_"
+          else basename
       | FStar | Coq | HOL4 -> to_snake_case basename)
   | None -> (
       (* No basename: we use the first letter of the type *)
@@ -2373,6 +2425,7 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
   *)
   match src with
   | TraitImplSource (trait_impl_ref, trait_decl_ref, item_id) ->
+      let fun_name = item_meta.name in
       let item_meta =
         if Option.is_some item_meta.attr_info.rename then item_meta
         else
@@ -2412,6 +2465,34 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
       (* Use the trait impl name *)
       let trait_impl_name =
         ctx_compute_trait_impl_name_aux ctx trait_impl_ref.id
+      in
+      (* A method with its own generics is monomorphized once per instantiation
+         of these generics, while the impl name only reflects the impl's
+         instantiation: add the method's instantiation to the name, like for
+         the other monomorphized functions. (Monomorphization drops the generic
+         methods from the trait declaration.) *)
+      let item_name =
+        let method_has_generics =
+          match
+            ( TraitDeclId.Map.find_opt trait_decl_ref.id ctx.trans_trait_decls,
+              item_id )
+          with
+          | Some trait_decl, T.AssocIdMethod method_id -> (
+              match
+                List.find_opt
+                  (fun (meth : trait_method) -> meth.method_id = method_id)
+                  trait_decl.methods
+              with
+              | Some meth -> meth.signature.generics.types <> []
+              | None -> true)
+          | _ -> false
+        in
+        match List.rev fun_name with
+        | (PeInstantiated _ as inst) :: _ when method_has_generics ->
+            Collections.List.last
+              (ctx_compute_simple_name item_meta ctx
+                 [ PeIdent (item_name, Disambiguator.zero); inst ])
+        | _ -> item_name
       in
       let name = flatten_name [ trait_impl_name; item_name ] in
       (* Append target suffix if this is a per-target method *)
