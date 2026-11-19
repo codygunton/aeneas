@@ -705,7 +705,7 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
     let sv_s = tvalue_as_symbolic span sv in
 
     (* Project the ADTs into different region abstractions *)
-    let project (parents : AbsId.Set.t) (r : region) : AbsId.id =
+    let project (r : region) =
       let regions = RegionSet.singleton r in
       let avl0, output0 =
         convert_value_to_output_avalues span ctx0 PLeft v0 regions
@@ -790,7 +790,7 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
           abs_id = ctx0.fresh_abs_id ();
           kind = S.fresh_abs_kind;
           can_end = true;
-          parents;
+          parents = AbsId.Set.empty;
           regions = { owned = regions };
           ended_subabs = AbsLevelSet.empty;
           avalues = avl0 @ avl1 @ [ av ];
@@ -798,22 +798,17 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
         }
       in
       [%ldebug "Pushing abs:\n" ^ abs_to_string span ctx0 abs];
-      push_abs abs;
-      abs.abs_id
+      push_abs abs
     in
-    let region_abs =
-      List.map (fun rid -> project AbsId.Set.empty (RVar (Free rid))) fresh_regions
-    in
+    List.iter (fun rid -> project (RVar (Free rid))) fresh_regions;
     (* The static region is not refreshed: if the type contains it (note that
        it may be hidden in an ADT, see {!TypesUtils.adt_has_hidden_static}) we
-       also need to introduce an abstraction for the static region. Like in the
-       regions hierarchy of a function call, it has the abstractions of the
-       other regions as parents (see [InterpJoin.reborrow_symbolic_borrows]). *)
+       also need to introduce an abstraction for the static region. *)
     if
       ty_has_regions_in_set ctx0.type_ctx.type_infos
         (RegionSet.singleton RStatic)
         ty_with_regions
-    then ignore (project (AbsId.Set.of_list region_abs) RStatic);
+    then project RStatic;
 
     (* *)
     sv
@@ -1433,9 +1428,7 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
         let avalues = [ proj_s0; proj_s1; proj_svj ] in
         (* Note that the static region is not refreshed: if the type contains it
            (it may be hidden in an ADT, see {!TypesUtils.adt_has_hidden_static})
-           we also need to introduce an abstraction for the static region. It
-           comes last and has the other abstractions as parents (see
-           [InterpJoin.reborrow_symbolic_borrows]). *)
+           we also need to introduce an abstraction for the static region. *)
         let regions =
           List.map (fun rid -> RVar (Free rid)) fresh_regions
           @
@@ -1446,9 +1439,8 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
           then [ RStatic ]
           else []
         in
-        ignore
-          (List.fold_left
-          (fun region_abs r ->
+        List.iter
+          (fun r ->
             let owned = RegionSet.singleton r in
             (* The abstraction expression continuation *)
             let cont : abs_cont option =
@@ -1497,18 +1489,15 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
                 abs_id = ctx0.fresh_abs_id ();
                 kind = S.fresh_abs_kind;
                 can_end = true;
-                parents =
-                  (if r = RStatic then AbsId.Set.of_list region_abs
-                   else AbsId.Set.empty);
+                parents = AbsId.Set.empty;
                 regions = { owned };
                 ended_subabs = AbsLevelSet.empty;
                 avalues;
                 cont;
               }
             in
-            push_abs abs;
-            abs.abs_id :: region_abs)
-          [] regions);
+            push_abs abs)
+          regions;
         svj)
       else
         (* Otherwise we simply introduce a fresh symbolic value, or reuse a
@@ -2461,7 +2450,15 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
       raise_distinct "match_abstractions: kind";
     if check_can_end && can_end0 <> can_end1 then
       raise_distinct "match_abstractions: can_end";
-    let _ = match_aids parents0 parents1 in
+    (* When matching a context with a (more general) source context, the
+       source abstraction may be more constrained than the target one: if the
+       target abstraction has no parents, ending it doesn't require ending other
+       abstractions first, and any order allowed by the source parents is also
+       allowed in the target (the parents only add ordering constraints). *)
+    let _ =
+      if (not check_equiv) && AbsId.Set.is_empty parents1 then parents1
+      else match_aids parents0 parents1
+    in
     if region_set_has_static regions0 <> region_set_has_static regions1 then
       raise_distinct "match_abstractions: static region";
     let _ =

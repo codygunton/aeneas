@@ -1,5 +1,4 @@
 //@ [!lean] skip
-//@ [lean] known-failure
 #![feature(register_tool)]
 #![register_tool(verify)]
 // Static borrows hidden in ADTs, in the shape of Cranelift's
@@ -8,11 +7,7 @@
 // `&Func` contains static borrows below a shared borrow, and the loop calling a
 // `&mut self` method with a reborrow `&func.dfg` creates region abstractions
 // for the static region holding nested shared borrows, which the joins must
-// destructure. Known failure: the test runner checks the invariants
-// (`-checks`), and the static borrows of the input symbolic values have
-// borrow projectors without loan projectors (Invariants.ml
-// check_symbolic_values), which is unrelated to the joins: the extraction
-// (without `-checks`) translates `SigSet::new`.
+// destructure.
 use std::borrow::Cow;
 
 pub struct Region {
