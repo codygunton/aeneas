@@ -2204,6 +2204,10 @@ let abs_is_destructured (span : Meta.span) (destructure_shared_values : bool)
 exception FoundBorrowId of unique_borrow_id
 exception FoundAbsId of AbsId.id
 
+(** An abstraction owning the static region which can be forgotten (see
+    [simplify_dummy_values_useless_abs_aux]) *)
+exception FoundStaticAbsToForget of AbsId.id
+
 (** Find the first endable loan projector in an abstraction.
 
     An endable loan projector is a loan projector over a symbolic value which
@@ -2222,13 +2226,21 @@ let find_first_endable_loan_proj_in_abs (span : Meta.span) (ctx : eval_ctx)
             (* Check if there are borrow projectors in the context
                or symbolic values with the same id *)
             let explore_shared = true in
-            (* Look for the symbolic values first *)
+            (* Look for the symbolic values first.
+
+               We ignore the values of the ended shared loans: nothing can
+               access them anymore (in particular, the inner borrows of such a
+               value, whose loans may be tracked by the projector of loans we
+               are looking at, are unreachable). *)
             let visitor =
-              object
+              object (self)
                 inherit [_] iter_eval_ctx
 
                 method! visit_VSymbolic _ sv' =
                   if sv'.sv_id = proj.proj.sv_id then raise Found else ()
+
+                method! visit_AEndedSharedLoan env _ child =
+                  self#visit_tavalue env child
               end
             in
             begin
@@ -2521,6 +2533,13 @@ let rec simplify_dummy_values_useless_abs_aux (config : config)
           end
         in
         let abs = visitor#visit_abs () abs in
+        (* An abstraction owning the static region whose borrows and loans are
+           not in use (see [abs_has_borrows_or_loans]) can be forgotten: we
+           remove it without ending its loans and borrows one by one (the values
+           of its ended shared loans may contain borrows of its own loans), and
+           without modifying the other abstractions. *)
+        if abs_owns_static abs && not (abs_has_borrows_or_loans ctx abs) then
+          raise (FoundStaticAbsToForget abs.abs_id);
         (* Check if it is possible to end the abstraction: if yes, raise an exception *)
         let opt_loan = get_first_non_ignored_aloan_in_abs span abs 0 (-1) in
         match opt_loan with
@@ -2548,7 +2567,13 @@ let rec simplify_dummy_values_useless_abs_aux (config : config)
               abs_is_endable ctx abs
               && not (abs_mut_borrows_loans_in_fixed span ctx frozen_abs abs)
             then raise (FoundAbsId abs.abs_id)
-            else EAbs abs :: explore_env ctx env
+            else (
+              (* The abstraction may own the static region and still hold
+                 projectors of loans (for instance below an ended shared
+                 loan): check if we can end some of them, which may allow
+                 forgetting the abstraction *)
+              find_first_endable_loan_proj_in_abs span ctx abs;
+              EAbs abs :: explore_env ctx env)
         | Some _ ->
             [%ldebug
               "There are non-ignored aloans in abs:\n"
@@ -2575,6 +2600,10 @@ let rec simplify_dummy_values_useless_abs_aux (config : config)
       (* TODO: generalize so that we can end sub-abstractions *)
       changed := true;
       let ctx, cc = end_abs config span ~snapshots abs_id 0 ctx in
+      comp cc (rec_call ctx)
+  | FoundStaticAbsToForget abs_id ->
+      changed := true;
+      let ctx, cc = end_abs_synthesize config span abs_id 0 ctx in
       comp cc (rec_call ctx)
   | FoundBorrowId bid ->
       changed := true;

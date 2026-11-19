@@ -680,9 +680,26 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
         List.filter_map
           (fun d ->
             try
-              let d = SymbolicToPure.translate_trait_impl trans_ctx d in
-              report 1;
-              Some d
+              match SymbolicToPure.trait_impl_mismatching_method trans_ctx d with
+              | Some method_name ->
+                  (* The instance doesn't type-check: don't generate it (see
+                     [trait_impl_mismatching_method]). The methods are still
+                     translated, and are called directly on the concrete type. *)
+                  [%warn_opt_span] (Some d.item_meta.span)
+                    ("Not generating the trait instance '"
+                    ^ name_to_string trans_ctx d.item_meta.name
+                    ^ "': the pure signature of method '" ^ method_name
+                    ^ "' doesn't match the signature of the trait method (the \
+                       implementing type contains mutable borrows whose regions \
+                       are parameters of the implementation, which introduces \
+                       backward functions the trait declaration can't express)"
+                    );
+                  report 1;
+                  None
+              | None ->
+                  let d = SymbolicToPure.translate_trait_impl trans_ctx d in
+                  report 1;
+                  Some d
             with exn when Errors.is_item_failure exn ->
               let error = Errors.to_item_failure exn in
               let name = name_to_string trans_ctx d.item_meta.name in
