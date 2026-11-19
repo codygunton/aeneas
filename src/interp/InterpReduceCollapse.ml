@@ -1236,16 +1236,23 @@ let mk_collapse_ctx_merge_duplicate_funs (span : Meta.span)
     (* Same remarks as for [merge_amut_borrows].
 
        This time we need to also merge the shared values. We rely on the
-       join matcher [JM] to do so.
+       join matcher [JM] to do so. The shared values may contain shared
+       borrows (which belong to the shared values): we check below that
+       matching them doesn't require introducing fresh region abstractions
+       (which we would lose).
     *)
     [%sanity_check] span
-      (not (value_has_loans_or_borrows (Some span) ctx sv0.value));
+      (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv0));
     [%sanity_check] span
-      (not (value_has_loans_or_borrows (Some span) ctx sv1.value));
+      (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv1));
 
     let ty = ty0 in
     let child = child0 in
+    let nabs = !S.nabs in
     let sv = M.match_tvalues ctx ctx sv0 sv1 in
+    [%cassert] span (!S.nabs == nabs)
+      "Merging shared loans whose shared values contain distinct borrows is \
+       not supported yet";
     let value = ALoan (ASharedLoan (PNone, ids, sv, child)) in
     { value; ty }
   in

@@ -1509,6 +1509,123 @@ let update_loops (crate : crate) (f : fun_decl) : fun_decl =
     ^ Print.fun_decl_to_string env "" " " f];
   f
 
+(** Move the [StorageDead] statements which immediately follow a branching
+    ([if then else], [switch], [match]) to the end of the branches which fall
+    through.
+
+    Rust ends the scope of the temporaries of a [match] (in particular of its
+    scrutinee) after the [match], so they are still alive at the join point of
+    the branches. For instance, in:
+    {[
+      let deadline = match self.fixup_records.peek() { // _4 = peek(...)
+        Some(fixup) => fixup.deadline(),
+        None => self.pending,
+      };
+      // storage_dead(_4)
+    ]}
+    [_4] holds (in the [Some] branch only) a borrow which keeps alive the region
+    abstraction introduced by the call to [peek]; in the [None] branch, this
+    abstraction can be ended. Joining such contexts generally fails. Killing
+    [_4] at the end of each branch instead allows ending the abstraction in
+    both branches before joining.
+
+    This is semantics preserving: no statement is evaluated between the end of
+    a branch and the original [StorageDead], so the state at the join point
+    is the same. The branches which don't fall through (they end with an
+    escape: [return], [break], [panic], etc.) never reach the [StorageDead]:
+    we leave them unchanged. *)
+let sink_storage_dead_into_branches (crate : crate) (f : fun_decl) : fun_decl =
+  let f0 = f in
+  let escapes (st : statement) : bool =
+    match st.kind with
+    | Return
+    | Break _
+    | Continue _
+    | Panic _
+    | UnwindTerminate _
+    | UndefinedBehavior
+    | UnwindResume -> true
+    | _ -> false
+  in
+  let rec update_block (b : block) : block =
+    { b with statements = update_statements b.statements }
+  and update_statements (sts : statement list) : statement list =
+    match sts with
+    | [] -> []
+    | st :: rest -> (
+        let st = update_statement st in
+        match st.kind with
+        | Switch (data, branches) ->
+            (* The [StorageDead]s may be interleaved with no-ops (e.g., the
+               [fake_read]s Rust inserts for the place a [let] binds): we move
+               the [StorageDead]s of the prefix made of such statements, except
+               those of the locals the no-ops mention. *)
+            let rec split (sts : statement list) =
+              match sts with
+              | ({ kind = StorageDead _ | PlaceMention _ | Borrowck _ | Nop; _ }
+                 as st)
+                :: sts ->
+                  let prefix, sts = split sts in
+                  (st :: prefix, sts)
+              | _ -> ([], sts)
+            in
+            let prefix, rest = split rest in
+            let mentioned = ref LocalId.Set.empty in
+            let collect =
+              object
+                inherit [_] iter_statement
+                method! visit_local_id _ id =
+                  mentioned := LocalId.Set.add id !mentioned
+              end
+            in
+            List.iter
+              (fun (st : statement) ->
+                match st.kind with
+                | StorageDead _ -> ()
+                | _ -> collect#visit_statement () st)
+              prefix;
+            let deads, kept =
+              List.partition
+                (fun (st : statement) ->
+                  match st.kind with
+                  | StorageDead id -> not (LocalId.Set.mem id !mentioned)
+                  | _ -> false)
+                prefix
+            in
+            let rest = kept @ rest in
+            let append (b : block) : block =
+              match List.rev b.statements with
+              | last :: _ when escapes last -> b
+              | _ -> { b with statements = b.statements @ deads }
+            in
+            let st =
+              if deads = [] then st
+              else { st with kind = Switch (data, List.map append branches) }
+            in
+            st :: update_statements rest
+        | _ -> st :: update_statements rest)
+  and update_statement (st : statement) : statement =
+    match st.kind with
+    | Switch (data, branches) ->
+        { st with kind = Switch (data, List.map update_block branches) }
+    | Loop b -> { st with kind = Loop (update_block b) }
+    | _ -> st
+  in
+  let body =
+    match f.body with
+    | StructuredBody body ->
+        StructuredBody { body with body = update_block body.body }
+    | other -> other
+  in
+  let f : fun_decl = { f with body } in
+  [%ldebug
+    let env = Print.crate_to_fmt_env crate in
+    "Before/after [sink_storage_dead_into_branches]:\n"
+    ^ Print.fun_decl_to_string env "" " " f0
+    ^ "\n\n"
+    ^ Print.fun_decl_to_string env "" " " f];
+  f
+
 (** Inline what comes after an [if then else], a [switch] or a [match], etc.
     under certain conditions, to prevent useless joins from being performed by
     the symbolic execution.
@@ -3425,6 +3542,7 @@ let apply_passes (crate : crate) : crate =
       ("join_block_escapes", join_block_escapes);
       ("hoist_match_fallbacks", hoist_match_fallbacks);
       ("update_loop", update_loops);
+      ("sink_storage_dead_into_branches", sink_storage_dead_into_branches);
       ("remove_useless_joins", remove_useless_joins);
       ( "remove_shallow_borrows_storage_live_dead",
         remove_shallow_borrows_storage_live_dead );

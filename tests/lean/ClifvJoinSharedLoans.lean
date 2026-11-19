@@ -183,4 +183,87 @@ def test_probe : Result Unit := do
 /- Unit test for [clifv_join_shared_loans::test_probe] -/
 #guard (test_probe).reducesTo ()
 
+/-- [clifv_join_shared_loans::Fixup]
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 73:0-76:1
+    Visibility: public -/
+structure Fixup where
+  offset : Std.U32
+  kind : Std.U8
+
+/-- [clifv_join_shared_loans::{clifv_join_shared_loans::Fixup}::deadline]:
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 79:4-81:5
+    Visibility: public -/
+def Fixup.deadline (self : Fixup) : Result Std.U32 := do
+  let i ← lift (UScalar.cast .U32 self.kind)
+  ok (core.num.U32.saturating_add self.offset i)
+
+/-- [clifv_join_shared_loans::Buf]
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 84:0-88:1
+    Visibility: public -/
+structure Buf where
+  fixups : alloc.vec.Vec Fixup
+  pending : Std.U32
+  cur : Std.U32
+
+/-- [clifv_join_shared_loans::peek]:
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 90:0-92:1
+    Visibility: public -/
+def peek (v : alloc.vec.Vec Fixup) : Result (Option Fixup) := do
+  let s := alloc.vec.Vec.deref v
+  core.slice.Slice.first s
+
+/-- [clifv_join_shared_loans::{clifv_join_shared_loans::Buf}::island_needed]:
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 95:4-101:5
+    Visibility: public -/
+def Buf.island_needed (self : Buf) (distance : Std.U32) : Result Bool := do
+  let o ← peek self.fixups
+  let deadline ←
+    match o with
+    | none => ok self.pending
+    | some fixup =>
+      do
+      let i ← Fixup.deadline fixup
+      ok (core.cmp.impls.OrdU32.min i self.pending)
+  if deadline < core.num.U32.MAX
+  then
+    let i ← lift (core.num.U32.saturating_add self.cur distance)
+    ok (i > deadline)
+  else ok false
+
+/-- [clifv_join_shared_loans::test_island_needed]:
+    Source: 'tests/src/clifv_join_shared_loans.rs', lines 105:0-114:1 -/
+def test_island_needed : Result Unit := do
+  let y ←
+    lift (Std.Array.to_slice
+      (Array.make 1#usize [ { offset := 10#u32, kind := 2#u8 } ] : Array Fixup
+      1#usize))
+  let ret := alloc.slice.Slice.into_vec y
+  let b ←
+    Buf.island_needed { fixups := ret, pending := 100#u32, cur := 5#u32 } 8#u32
+  massert b
+  let b1 ←
+    Buf.island_needed { fixups := ret, pending := 100#u32, cur := 5#u32 } 6#u32
+  massert (¬ b1)
+  let b2 ←
+    Buf.island_needed
+      { fixups := (alloc.vec.Vec.new Fixup), pending := 100#u32, cur := 5#u32 }
+      8#u32
+  massert (¬ b2)
+  let b3 ←
+    Buf.island_needed
+      { fixups := (alloc.vec.Vec.new Fixup), pending := 100#u32, cur := 5#u32 }
+      96#u32
+  massert b3
+  let b4 ←
+    Buf.island_needed
+      {
+        fixups := (alloc.vec.Vec.new Fixup),
+        pending := core.num.U32.MAX,
+        cur := 5#u32
+      } 1000#u32
+  massert (¬ b4)
+
+/- Unit test for [clifv_join_shared_loans::test_island_needed] -/
+#guard (test_island_needed).reducesTo ()
+
 end clifv_join_shared_loans
