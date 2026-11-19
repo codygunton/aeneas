@@ -62,91 +62,94 @@ def Op.Insts.CoreMarkerCopy : core.marker.Copy Op := {
     Source: 'tests/src/clifv_enum_fallback.rs', lines 25:0-77:1
     Visibility: public -/
 def rules (op : Op) (x : Std.U32) : Result Std.U32 := do
-  let (return_carrier, join_flag) ←
+  let (i, return_carrier, join_flag) ←
     match op with
     | Op.V0 =>
       if x > 0#u32
-      then do
-           let return_carrier1 ← x - 0#u32
-           ok (return_carrier1, 2#u32)
-      else ok (0#u32, 0#u32)
-    | _ => ok (0#u32, 0#u32)
+      then
+        do
+        let return_carrier1 ← x - 0#u32
+        ok (return_carrier1, return_carrier1, 2#u32)
+      else ok (0#u32, 0#u32, 0#u32)
+    | _ => ok (0#u32, 0#u32, 0#u32)
   match join_flag with
   | 2#uscalar => ok return_carrier
   | _ =>
-    let (return_carrier1, join_flag1) ←
+    let (i1, return_carrier1, join_flag1) ←
       match op with
       | Op.V1 =>
         if x > 1#u32
-        then do
-             let return_carrier2 ← x - 1#u32
-             ok (return_carrier2, 2#u32)
-        else ok (return_carrier, 0#u32)
-      | _ => ok (return_carrier, 0#u32)
+        then
+          do
+          let return_carrier2 ← x - 1#u32
+          ok (return_carrier2, return_carrier2, 2#u32)
+        else ok (i, return_carrier, 0#u32)
+      | _ => ok (i, return_carrier, 0#u32)
     match join_flag1 with
     | 2#uscalar => ok return_carrier1
     | _ =>
-      let (return_carrier2, join_flag2) ←
+      let (i2, return_carrier2, join_flag2) ←
         match op with
         | Op.V2 =>
           if x > 2#u32
-          then do
-               let return_carrier3 ← x - 2#u32
-               ok (return_carrier3, 2#u32)
-          else ok (return_carrier1, 0#u32)
-        | _ => ok (return_carrier1, 0#u32)
+          then
+            do
+            let return_carrier3 ← x - 2#u32
+            ok (return_carrier3, return_carrier3, 2#u32)
+          else ok (i1, return_carrier1, 0#u32)
+        | _ => ok (i1, return_carrier1, 0#u32)
       match join_flag2 with
       | 2#uscalar => ok return_carrier2
       | _ =>
-        let (return_carrier3, join_flag3) ←
+        let (i3, return_carrier3, join_flag3) ←
           match op with
           | Op.V3 =>
             if x > 3#u32
             then
               do
               let return_carrier4 ← x - 3#u32
-              ok (return_carrier4, 2#u32)
-            else ok (return_carrier2, 0#u32)
-          | _ => ok (return_carrier2, 0#u32)
+              ok (return_carrier4, return_carrier4, 2#u32)
+            else ok (i2, return_carrier2, 0#u32)
+          | _ => ok (i2, return_carrier2, 0#u32)
         match join_flag3 with
         | 2#uscalar => ok return_carrier3
         | _ =>
-          let (return_carrier4, join_flag4) ←
+          let (i4, return_carrier4, join_flag4) ←
             match op with
             | Op.V4 =>
               if x > 4#u32
               then
                 do
                 let return_carrier5 ← x - 4#u32
-                ok (return_carrier5, 2#u32)
-              else ok (return_carrier3, 0#u32)
-            | _ => ok (return_carrier3, 0#u32)
+                ok (return_carrier5, return_carrier5, 2#u32)
+              else ok (i3, return_carrier3, 0#u32)
+            | _ => ok (i3, return_carrier3, 0#u32)
           match join_flag4 with
           | 2#uscalar => ok return_carrier4
           | _ =>
-            let (return_carrier5, join_flag5) ←
+            let (i5, return_carrier5, join_flag5) ←
               match op with
               | Op.V5 =>
                 if x > 5#u32
                 then
                   do
                   let return_carrier6 ← x - 5#u32
-                  ok (return_carrier6, 2#u32)
-                else ok (return_carrier4, 0#u32)
-              | _ => ok (return_carrier4, 0#u32)
+                  ok (return_carrier6, return_carrier6, 2#u32)
+                else ok (i4, return_carrier4, 0#u32)
+              | _ => ok (i4, return_carrier4, 0#u32)
             match join_flag5 with
             | 2#uscalar => ok return_carrier5
             | _ =>
-              let (return_carrier6, join_flag6) ←
+              let (i6, return_carrier6, join_flag6) ←
                 match op with
                 | Op.V6 =>
                   if x > 6#u32
                   then
                     do
                     let return_carrier7 ← x - 6#u32
-                    ok (return_carrier7, 2#u32)
-                  else ok (return_carrier5, 0#u32)
-                | _ => ok (return_carrier5, 0#u32)
+                    ok (return_carrier7, return_carrier7, 2#u32)
+                  else ok (i5, return_carrier5, 0#u32)
+                | _ => ok (i5, return_carrier5, 0#u32)
               match join_flag6 with
               | 2#uscalar => ok return_carrier6
               | _ =>

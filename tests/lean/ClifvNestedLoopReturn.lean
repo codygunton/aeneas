@@ -25,33 +25,33 @@ namespace clifv_nested_loop_return
     Visibility: public -/
 @[rust_loop_body]
 def find_pair_loop0_loop0.body
-  (n : Std.U32) (target : Std.U32) (i : Std.U32) (return_carrier : Std.U32)
-  (j : Std.U32) :
-  Result (ControlFlow Std.U32 (Std.U32 × Std.U32))
+  (i : Std.U32) (n : Std.U32) (target : Std.U32) (i1 : Std.U32)
+  (return_carrier : Std.U32) (j : Std.U32) :
+  Result (ControlFlow Std.U32 (Std.U32 × Std.U32 × Std.U32))
   := do
   if j < n
   then
-    let i1 ← i * j
-    if i1 = target
+    let i2 ← i1 * j
+    if i2 = target
     then
-      let i2 ← i * 100#u32
-      let return_carrier1 ← i2 + j
-      ok (done (return_carrier1, 1#u32))
+      let i3 ← i1 * 100#u32
+      let return_carrier1 ← i3 + j
+      ok (done (return_carrier1, return_carrier1, 1#u32))
     else let j1 ← j + 1#u32
          ok (cont j1)
-  else ok (done (return_carrier, 0#u32))
+  else ok (done (i, return_carrier, 0#u32))
 
 /-- [clifv_nested_loop_return::find_pair]: loop 1:
     Source: 'tests/src/clifv_nested_loop_return.rs', lines 12:8-21:1
     Visibility: public -/
 @[rust_loop]
 def find_pair_loop0_loop0
-  (n : Std.U32) (target : Std.U32) (i : Std.U32) (j : Std.U32)
+  (i : Std.U32) (n : Std.U32) (target : Std.U32) (i1 : Std.U32) (j : Std.U32)
   (return_carrier : Std.U32) :
-  Result (Std.U32 × Std.U32)
+  Result (Std.U32 × Std.U32 × Std.U32)
   := do
   loop
-    (fun j1 => find_pair_loop0_loop0.body n target i return_carrier j1)
+    (fun j1 => find_pair_loop0_loop0.body i n target i1 return_carrier j1)
     j
 
 /-- [clifv_nested_loop_return::find_pair]: loop body 0:
@@ -59,39 +59,48 @@ def find_pair_loop0_loop0
     Visibility: public -/
 @[rust_loop_body]
 def find_pair_loop0.body
-  (n : Std.U32) (target : Std.U32) (i : Std.U32) (return_carrier : Std.U32) :
-  Result (ControlFlow (Std.U32 × Std.U32) Std.U32)
+  (n : Std.U32) (target : Std.U32) (i : Std.U32) (i1 : Std.U32)
+  (return_carrier : Std.U32) :
+  Result (ControlFlow (Std.U32 × Std.U32 × Std.U32) (Std.U32 × Std.U32))
   := do
-  if i < n
+  if i1 < n
   then
-    let j ← i + 1#u32
-    let (return_carrier1, loop_exit) ←
-      find_pair_loop0_loop0 n target i j return_carrier
+    let j ← i1 + 1#u32
+    let (i2, return_carrier1, loop_exit) ←
+      find_pair_loop0_loop0 i n target i1 j return_carrier
     match loop_exit with
-    | 1#uscalar => ok (done return_carrier1)
-    | _ => let i1 ← i + 1#u32
-           ok (cont (i1, return_carrier1))
-  else ok (done core.num.U32.MAX)
+    | 1#uscalar => ok (done (return_carrier1, 1#u32))
+    | _ => let i3 ← i1 + 1#u32
+           ok (cont (i2, i3, return_carrier1))
+  else ok (done (return_carrier, 0#u32))
 
 /-- [clifv_nested_loop_return::find_pair]: loop 0:
     Source: 'tests/src/clifv_nested_loop_return.rs', lines 10:4-21:1
     Visibility: public -/
 @[rust_loop]
 def find_pair_loop0
-  (n : Std.U32) (target : Std.U32) (i : Std.U32) (return_carrier : Std.U32) :
-  Result Std.U32
+  (i : Std.U32) (n : Std.U32) (target : Std.U32) (i1 : Std.U32)
+  (return_carrier : Std.U32) :
+  Result (Std.U32 × Std.U32)
   := do
   loop
-    (fun (i1, return_carrier1) => find_pair_loop0.body n target i1
+    (fun (i2, i3, return_carrier1) => find_pair_loop0.body n target i2 i3
       return_carrier1)
-    (i, return_carrier)
+    (i, i1, return_carrier)
 
 /-- [clifv_nested_loop_return::find_pair]:
     Source: 'tests/src/clifv_nested_loop_return.rs', lines 8:0-21:1
     Visibility: public -/
-@[reducible]
 def find_pair (n : Std.U32) (target : Std.U32) : Result Std.U32 := do
-  find_pair_loop0 n target 0#u32 0#u32
+  let (return_carrier, loop_exit) ←
+    find_pair_loop0 0#u32 n target 0#u32 0#u32
+  let join_flag ←
+    match loop_exit with
+    | 1#uscalar => ok 2#u32
+    | _ => ok 0#u32
+  match join_flag with
+  | 2#uscalar => ok return_carrier
+  | _ => ok core.num.U32.MAX
 
 /-- [clifv_nested_loop_return::test_find_pair]:
     Source: 'tests/src/clifv_nested_loop_return.rs', lines 24:0-28:1

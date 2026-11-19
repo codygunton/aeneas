@@ -286,11 +286,11 @@ def ASIMDMovModImm.maybe_from_u64
               match loop_exit with
               | 1#uscalar => ok 2#u32
               | _ => ok 0#u32
-            let o ←
+            let return_carrier3 ←
               match join_flag2 with
               | 0#uscalar => ok (some none)
               | _ => ok return_carrier2
-            ok (o, join_flag2)
+            ok (return_carrier3, join_flag2)
       let i1 ←
         match join_flag1 with
         | 0#uscalar => ok 2#u32
