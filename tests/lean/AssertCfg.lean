@@ -115,12 +115,13 @@ def assert_not_b0_and_not_b1 (b0 : Bool) (b1 : Bool) : Result Unit := do
     Visibility: public -/
 def assert_or_call : Result Unit := do
   let b ← get_b0
-  let _ ← if b
-            then ok true
-            else do
-                 let b1 ← get_b1
-                 massert b1
-                 ok false
+  let _ ←
+    (if b
+     then ok true
+     else do
+          let b1 ← get_b1
+          massert b1
+          ok false : Result Bool)
   f
 
 /-- [assert_cfg::assert_and_call]:
@@ -149,12 +150,12 @@ def assert_not_or_call : Result Unit := do
 def assert_not_and_call : Result Unit := do
   let b ← get_b0
   let _ ←
-    if b
-    then do
-         let b1 ← get_b1
-         massert (¬ b1)
-         ok true
-    else ok false
+    (if b
+     then do
+          let b1 ← get_b1
+          massert (¬ b1)
+          ok true
+     else ok false : Result Bool)
   f
 
 /-- [assert_cfg::assert_not_b0_or_b1_call]:
@@ -162,12 +163,13 @@ def assert_not_and_call : Result Unit := do
     Visibility: public -/
 def assert_not_b0_or_b1_call : Result Unit := do
   let b ← get_b0
-  let _ ← if b
-            then do
-                 let b1 ← get_b1
-                 massert b1
-                 ok true
-            else ok false
+  let _ ←
+    (if b
+     then do
+          let b1 ← get_b1
+          massert b1
+          ok true
+     else ok false : Result Bool)
   f
 
 /-- [assert_cfg::assert_b0_or_not_b1_call]:
@@ -176,12 +178,12 @@ def assert_not_b0_or_b1_call : Result Unit := do
 def assert_b0_or_not_b1_call : Result Unit := do
   let b ← get_b0
   let _ ←
-    if b
-    then ok true
-    else do
-         let b1 ← get_b1
-         massert (¬ b1)
-         ok false
+    (if b
+     then ok true
+     else do
+          let b1 ← get_b1
+          massert (¬ b1)
+          ok false : Result Bool)
   f
 
 /-- [assert_cfg::assert_not_b0_or_not_b1_call]:
@@ -190,12 +192,12 @@ def assert_b0_or_not_b1_call : Result Unit := do
 def assert_not_b0_or_not_b1_call : Result Unit := do
   let b ← get_b0
   let _ ←
-    if b
-    then do
-         let b1 ← get_b1
-         massert (¬ b1)
-         ok true
-    else ok false
+    (if b
+     then do
+          let b1 ← get_b1
+          massert (¬ b1)
+          ok true
+     else ok false : Result Bool)
   f
 
 /-- [assert_cfg::assert_not_b0_and_b1_call]:
@@ -329,9 +331,10 @@ def assert_or_in_loop_loop.body
     let c1 ← lift (core.num.U32.wrapping_sub c 200#u32)
     let i1 ← lift (IScalar.hcast .U32 (-200)#i32)
     massert ((c1 >= i1) || (c1 < 100#u32))
-    let iter2 ← if c1 >= i1
-                  then ok iter1
-                  else ok iter1
+    let iter2 ←
+      (if c1 >= i1
+       then ok iter1
+       else ok iter1 : Result (core.ops.range.Range Std.Usize))
     let i2 ← c1 >>> 16#i32
     let i3 ← lift (100#u32 &&& i2)
     let c2 ← lift (core.num.U32.wrapping_add c1 i3)

@@ -159,7 +159,7 @@ def test_string_ops : Result Unit := do
   let b ← alloc.string.String.Insts.CoreCmpPartialEqString.eq t s2
   massert b
   let u ← alloc.string.String.with_capacity 8#usize
-  let u1 ← alloc.string.String.push_str u (toStr "ab\195\169")
+  let u1 ← alloc.string.String.push_str u (toStr "abé")
   let b1 ← alloc.string.String.Insts.CoreCmpPartialEqString.eq u1 s2
   massert b1
   let v ←
@@ -207,19 +207,7 @@ def test_join : Result Unit := do
 /-- [clifv_std_alloc_string::test_replace]:
     Source: 'tests/src/clifv_std_alloc_string.rs', lines 44:0-49:1
     Visibility: public -/
-def test_replace : Result Unit := do
-  let s ←
-    alloc.str.Str.replace SharedBStr.Insts.CoreStrPatternPattern (toStr
-      "0x1_00_0") (toStr "_") (toStr "")
-  let b ←
-    alloc.string.String.Insts.CoreCmpPartialEqShared0Str.eq s (toStr "0x1000")
-  massert b
-  let t ←
-    alloc.str.Str.replace SharedBStr.Insts.CoreStrPatternPattern (toStr "aaa")
-      (toStr "aa") (toStr "b")
-  let b1 ←
-    alloc.string.String.Insts.CoreCmpPartialEqShared0Str.eq t (toStr "ba")
-  massert b1
+opaque test_replace : Result Unit := fail .undef
 
 /- Unit test for [clifv_std_alloc_string::test_replace] -/
 #guard (test_replace).reducesTo ()
@@ -261,7 +249,7 @@ def test_format : Result Unit := do
   let d ← core.hint.must_use s2
   let b2 ←
     alloc.string.String.Insts.CoreCmpPartialEqShared0Str.eq d (toStr
-      "[q|  q|"q"]")
+      "[q|  q|\"q\"]")
   massert b2
   let a5 ←
     core.fmt.rt.Argument.new_display (alloc.borrow.Cow.Insts.CoreFmtDisplay

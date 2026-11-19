@@ -57,40 +57,41 @@ def doubled
 def test_doubled : Result Unit := do
   let o ← doubled (core.result.Result.Ok 1#i32)
   let b ←
-    match o with
-    | none => ok false
-    | some i => match i with
-                | 2#iscalar => ok true
-                | _ => ok false
+    (match o with
+     | none => ok false
+     | some i => match i with
+                 | 2#iscalar => ok true
+                 | _ => ok false : Result Bool)
   massert b
   let o1 ← doubled (core.result.Result.Ok 2#i32)
   let b1 ←
-    match o1 with
-    | none => ok false
-    | some i => match i with
-                | 4#iscalar => ok true
-                | _ => ok false
+    (match o1 with
+     | none => ok false
+     | some i => match i with
+                 | 4#iscalar => ok true
+                 | _ => ok false : Result Bool)
   massert b1
   let o2 ← doubled (core.result.Result.Ok 3#i32)
   let b2 ←
-    match o2 with
-    | none => ok false
-    | some i => match i with
-                | 6#iscalar => ok true
-                | _ => ok false
+    (match o2 with
+     | none => ok false
+     | some i => match i with
+                 | 6#iscalar => ok true
+                 | _ => ok false : Result Bool)
   massert b2
   let o3 ← doubled (core.result.Result.Ok 4#i32)
   let b3 ←
-    match o3 with
-    | none => ok false
-    | some i => match i with
-                | 8#iscalar => ok true
-                | _ => ok false
+    (match o3 with
+     | none => ok false
+     | some i => match i with
+                 | 8#iscalar => ok true
+                 | _ => ok false : Result Bool)
   massert b3
   let o4 ← doubled (core.result.Result.Err ())
-  let b4 ← match o4 with
-             | none => ok true
-             | some _ => ok false
+  let b4 ←
+    (match o4 with
+     | none => ok true
+     | some _ => ok false : Result Bool)
   massert b4
 
 /- Unit test for [results::test_doubled] -/
@@ -131,20 +132,20 @@ def scale
 def test_scale : Result Unit := do
   let r ← scale (core.result.Result.Ok 3#u32) 5#u32
   let b ←
-    match r with
-    | core.result.Result.Ok i =>
-      match i with
-      | 15#uscalar => ok true
-      | _ => ok false
-    | core.result.Result.Err _ => ok false
+    (match r with
+     | core.result.Result.Ok i =>
+       match i with
+       | 15#uscalar => ok true
+       | _ => ok false
+     | core.result.Result.Err _ => ok false : Result Bool)
   massert b
   let r1 ← scale (core.result.Result.Err true) 5#u32
   let b1 ←
-    match r1 with
-    | core.result.Result.Ok _ => ok false
-    | core.result.Result.Err b2 => if b2
-                                   then ok true
-                                   else ok false
+    (match r1 with
+     | core.result.Result.Ok _ => ok false
+     | core.result.Result.Err b2 => if b2
+                                    then ok true
+                                    else ok false : Result Bool)
   massert b1
 
 /- Unit test for [results::test_scale] -/

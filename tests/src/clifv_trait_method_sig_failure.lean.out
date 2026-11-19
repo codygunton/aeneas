@@ -8,4 +8,4 @@ Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
 Compiler source: Translate.ml, line 489
 
 [[92mInfo[39m ] Generated the partial file (because of 1 errors, including 1 unique errors): tests/lean/ClifvTraitMethodSigFailure.lean
-[[92mInfo[39m ] Total execution time: 0.238165 seconds
+[[92mInfo[39m ] Total execution time: 0.230182 seconds

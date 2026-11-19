@@ -125,14 +125,16 @@ impl_def F.Insts.Issue_765_hrtb_conditional_negateConditionallySelectable :
 /-- [issue_765_hrtb_conditional_negate::{impl core::ops::arith::Neg<issue_765_hrtb_conditional_negate::F> for &'a issue_765_hrtb_conditional_negate::F}::neg]:
     Source: 'tests/src/issue-765-hrtb-conditional-negate.rs', lines 35:4-37:5
     Visibility: public -/
-def SharedAF.Insts.CoreOpsArithNegF.neg (self : F) : Result F := do
+def issue_765_hrtb_conditional_negate.SharedAF.Insts.CoreOpsArithNegF.neg
+  (self : F) : Result F := do
   ok ()
 
 /-- Trait implementation: [issue_765_hrtb_conditional_negate::{impl core::ops::arith::Neg<issue_765_hrtb_conditional_negate::F> for &'a issue_765_hrtb_conditional_negate::F}]
     Source: 'tests/src/issue-765-hrtb-conditional-negate.rs', lines 32:0-38:1 -/
 @[reducible]
-def SharedAF.Insts.CoreOpsArithNegF : core.ops.arith.Neg F F := {
-  neg := SharedAF.Insts.CoreOpsArithNegF.neg
+def issue_765_hrtb_conditional_negate.SharedAF.Insts.CoreOpsArithNegF :
+  core.ops.arith.Neg F F := {
+  neg := issue_765_hrtb_conditional_negate.SharedAF.Insts.CoreOpsArithNegF.neg
 }
 
 /-- [issue_765_hrtb_conditional_negate::ext::{impl issue_765_hrtb_conditional_negate::ext::ConditionallyNegatable for T}::conditional_negate]:
@@ -178,7 +180,7 @@ def local.ConditionallyNegatable.Blanket {T : Type _}
 def call_opaque_blanket_impl (choice : Choice) : Result F := do
   ext.ConditionallyNegatable.Blanket.conditional_negate
     F.Insts.Issue_765_hrtb_conditional_negateConditionallySelectable
-    SharedAF.Insts.CoreOpsArithNegF () choice
+    issue_765_hrtb_conditional_negate.SharedAF.Insts.CoreOpsArithNegF () choice
 
 /-- [issue_765_hrtb_conditional_negate::call_transparent_blanket_impl]:
     Source: 'tests/src/issue-765-hrtb-conditional-negate.rs', lines 89:0-94:1
@@ -186,6 +188,6 @@ def call_opaque_blanket_impl (choice : Choice) : Result F := do
 def call_transparent_blanket_impl (choice : Choice) : Result F := do
   local.ConditionallyNegatable.Blanket.conditional_negate
     F.Insts.Issue_765_hrtb_conditional_negateConditionallySelectable
-    SharedAF.Insts.CoreOpsArithNegF () choice
+    issue_765_hrtb_conditional_negate.SharedAF.Insts.CoreOpsArithNegF () choice
 
 end issue_765_hrtb_conditional_negate

@@ -44,11 +44,11 @@ def unnecessary_error_2 (b0 : Bool) (b1 : Bool) : Result Unit := do
             then ok 0#u32
             else ok 1#u32
   let _ ←
-    if b1
-    then do
-         core.mem.drop 2#u32
-         ok (2#u32, true)
-    else ok (0#u32, false)
+    (if b1
+     then do
+          core.mem.drop 2#u32
+          ok (2#u32, true)
+     else ok (0#u32, false) : Result (Std.U32 × Bool))
   let _ ← 2#u32 + 1#u32
   core.mem.drop i
 

@@ -715,9 +715,9 @@ def loop_opt_static (o : Option Std.U32) (n : Std.U32) : Result Std.U32 := do
     Source: 'tests/src/static.rs', lines 426:0-432:1 -/
 def branch_opt_static
   (o : Option Std.U32) (p : Option Std.U32) (b : Bool) : Result Std.U32 := do
-  let q ← if b
-            then ok o
-            else ok p
+  let q ← (if b
+             then ok o
+             else ok p : Result (Option Std.U32))
   match q with
   | none => ok 0#u32
   | some x => ok x
@@ -803,9 +803,10 @@ def loop_copy_static_ref
 /-- [static::join_concrete_static_ref]:
     Source: 'tests/src/static.rs', lines 467:0-477:1 -/
 def join_concrete_static_ref (b : Bool) : Result Std.U32 := do
-  let o ← if b
-            then ok (some ({ x := GLOBAL } : StaticRef))
-            else ok none
+  let o ←
+    (if b
+     then ok (some ({ x := GLOBAL } : StaticRef))
+     else ok none : Result (Option StaticRef))
   match o with
   | none => ok 0#u32
   | some sr => ok sr.x
@@ -813,9 +814,9 @@ def join_concrete_static_ref (b : Bool) : Result Std.U32 := do
 /-- [static::join_concrete_static]:
     Source: 'tests/src/static.rs', lines 479:0-485:1 -/
 def join_concrete_static (b : Bool) : Result Std.U32 := do
-  let o ← if b
-            then ok (some GLOBAL)
-            else ok none
+  let o ← (if b
+             then ok (some GLOBAL)
+             else ok none : Result (Option Std.U32))
   match o with
   | none => ok 0#u32
   | some x => ok x
@@ -835,9 +836,10 @@ def branch_opt_static_mut
   Result ((Option Std.U32) × (Option Std.U32))
   := do
   let (q, back) ←
-    if b
-    then ok (o, fun o1 => (o1, p))
-    else ok (p, fun o1 => (o, o1))
+    (if b
+     then ok (o, fun o1 => (o1, p))
+     else ok (p, fun o1 => (o, o1)) : Result ((Option Std.U32) × (Option
+      Std.U32 → ((Option Std.U32) × (Option Std.U32)))))
   match q with
   | none => ok (back none)
   | some x => let x1 ← x + 1#u32

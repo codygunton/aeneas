@@ -35,6 +35,12 @@ Compiler source: Translate.ml, line 673
 [[91mError[39m] Not_found
 Compiler source: <stdlib>, line 0
 
-[[92mInfo[39m ] Generated the partial file (because of 2 errors, including 2 unique errors): tests/lean/ClifvStdAllocString.lean
+[[91mError[39m] Reference to an item whose extraction failed: trait_impl_id: 17
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 44:0-49:1
+Compiler source: extract/ExtractBase.ml, line 478
+[[91mError[39m] Reference to an item whose extraction failed: trait_impl_id: 17
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 44:0-49:1
+Compiler source: extract/ExtractBase.ml, line 478
+[[92mInfo[39m ] Generated the partial file (because of 4 errors, including 3 unique errors): tests/lean/ClifvStdAllocString.lean
 [[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
-[[92mInfo[39m ] Total execution time: 0.961854 seconds
+[[92mInfo[39m ] Total execution time: 1.004196 seconds

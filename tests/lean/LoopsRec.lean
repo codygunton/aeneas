@@ -1009,19 +1009,19 @@ def as_radix_minimized_loop
   if i < 4#usize
   then
     let _ ←
-      if i = 0#usize
-      then
-        do
-        let i1 ← Array.index_usize scalar i
-        let i2 ← i1 >>> 1#i32
-        ok (i2, true)
-      else
-        do
-        let i1 ← Array.index_usize scalar i
-        let i2 ← i1 >>> 1#i32
-        let i3 ← i1 <<< 63#i32
-        let i4 ← lift (i2 ||| i3)
-        ok (i4, false)
+      (if i = 0#usize
+       then
+         do
+         let i1 ← Array.index_usize scalar i
+         let i2 ← i1 >>> 1#i32
+         ok (i2, true)
+       else
+         do
+         let i1 ← Array.index_usize scalar i
+         let i2 ← i1 >>> 1#i32
+         let i3 ← i1 <<< 63#i32
+         let i4 ← lift (i2 ||| i3)
+         ok (i4, false) : Result (Std.U64 × Bool))
     let i1 ← i + 1#usize
     as_radix_minimized_loop scalar i1
   else ok ()

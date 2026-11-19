@@ -87,4 +87,4 @@ Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
 Compiler source: extract/Extract.ml, line 3498
 [[92mInfo[39m ] Generated the partial file (because of 15 errors, including 7 unique errors): tests/lean/ClifvStubFailedItems.lean
 [[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
-[[92mInfo[39m ] Total execution time: 0.342756 seconds
+[[92mInfo[39m ] Total execution time: 0.324146 seconds
