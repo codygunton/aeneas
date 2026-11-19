@@ -896,7 +896,10 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
          nested in another loop: either the loop has no [break] at all
          (transformation 1), or the statements after it end with a return or a
          panic (transformations 2 and 3, which duplicate those statements: only
-         once, since the loop is not nested). *)
+         once, since the loop is not nested). With a function-level carrier,
+         [join_block_escapes] then rewrites the [return]s following the loop
+         (in the branches of the enclosing branchings) into join flags, so only
+         transformation 1 remains applicable. *)
       let upstream_handles_returns (loop_body : block) (after : statement list)
           : bool =
         let has_break =
@@ -918,7 +921,7 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
             :: _ -> true
           | _ :: stl -> ends_in_return_or_panic stl
         in
-        (not has_break) || ends_in_return_or_panic after
+        (not has_break) || ((not has_carrier) && ends_in_return_or_panic after)
       in
       (* [depth]: number of enclosing loops *)
       let rec lower_block (depth : int) (b : block) : block =
@@ -1155,6 +1158,73 @@ let has_wide_fallback_match (crate : crate) (body : expr_body) : bool =
     false
   with Utils.Found -> true
 
+(** The local of a place which is a whole local *)
+let whole_local (p : place) : LocalId.id option =
+  match p.kind with
+  | PlaceLocal id -> Some id
+  | _ -> None
+
+(** Count the reads of locals in a statement: all their occurrences but the
+    whole destinations of assignments and calls, and the storage markers *)
+let count_local_reads (counts : int LocalId.Map.t ref) (st : statement) : unit
+    =
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+
+      method! visit_local_id _ id =
+        counts :=
+          LocalId.Map.update id
+            (fun n -> Some (1 + Option.value n ~default:0))
+            !counts
+
+      method! visit_statement env st =
+        match st.kind with
+        | Assign (p, rv) when Option.is_some (whole_local p) ->
+            super#visit_rvalue env rv
+        | Call (call, p, unwind) when Option.is_some (whole_local p) ->
+            super#visit_call env call;
+            super#visit_block env unwind
+        | StorageLive _ | StorageDead _ -> ()
+        | _ -> super#visit_statement env st
+    end
+  in
+  visitor#visit_statement () st
+
+let local_reads (stl : statement list) : int LocalId.Map.t =
+  let counts = ref LocalId.Map.empty in
+  List.iter (count_local_reads counts) stl;
+  !counts
+
+let reads_of (counts : int LocalId.Map.t) (id : LocalId.id) : int =
+  Option.value (LocalId.Map.find_opt id counts) ~default:0
+
+(** The locals assigned as a whole in some blocks *)
+let assigned_locals (blocks : block list) : LocalId.Set.t =
+  let acc = ref LocalId.Set.empty in
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+
+      method! visit_statement env st =
+        (match st.kind with
+        | Assign (p, _) | Call (_, p, _) -> (
+            match whole_local p with
+            | Some id -> acc := LocalId.Set.add id !acc
+            | None -> ())
+        | _ -> ());
+        super#visit_statement env st
+    end
+  in
+  List.iter (visitor#visit_block ()) blocks;
+  !acc
+
+(** Is a type an integer or a boolean (see [init_join_scalars])? *)
+let is_int_or_bool_ty (ty : ty) : bool =
+  match ty with
+  | TScalar (TInteger _ | TBool) -> true
+  | _ -> false
+
 (** Evaluate the fallback branch of a match on an enumeration only once.
 
     The symbolic execution expands the scrutinee of a match into every variant
@@ -1169,17 +1239,42 @@ let has_wide_fallback_match (crate : crate) (body : expr_body) : bool =
     branch after the match:
     [flag := 0; match x { ..., _ => flag := 1 }; if flag == 1 { fallback }].
     We only do so in functions whose return value is in a carrier (see
-    [ret_to_carrier]) or with such matches (see [has_wide_fallback_match]). *)
+    [ret_to_carrier]) or with such matches (see [has_wide_fallback_match]).
+
+    The contexts of the other branches are joined with the one of the
+    fallback stub, in which the locals that the other branches initialize are
+    uninitialized: after the join they are uninitialized ([Bottom]) on every
+    path. [init_join_scalars] gives such integer and boolean locals an initial
+    value; we don't hoist the fallback of a match whose other branches
+    initialize a local of another type which is read after the match (e.g.
+    [let r: &[T] = match x { A => .., _ => &[] }]). *)
 let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body
     when Option.is_some (find_return_carrier body)
          || has_wide_fallback_match crate body ->
       let fresh, finish = fresh_locals body in
+      let has_carrier = Option.is_some (find_return_carrier body) in
       let is_trivial (st : statement) =
         match st.kind with
         | StorageDead _ | StorageLive _ | Nop -> true
         | _ -> false
+      in
+      let total_reads = local_reads body.body.statements in
+      let local_ty id = (List.nth body.locals.locals (LocalId.to_int id)).local_ty in
+      (* Does a branch other than the fallback initialize a local (which
+         [init_join_scalars] doesn't handle) read after the match? With a
+         carrier, the return value is moved into the carrier right after being
+         assigned. *)
+      let loses_values (st : statement) (fb_index : int) (branches : block list) =
+        let others = List.filteri (fun i _ -> i <> fb_index) branches in
+        let inside = local_reads [ st ] in
+        LocalId.Set.exists
+          (fun id ->
+            (not (is_int_or_bool_ty (local_ty id)))
+            && (not (has_carrier && id = LocalId.zero))
+            && reads_of total_reads id > reads_of inside id)
+          (assigned_locals others)
       in
       let update (st : statement) : statement list =
         match st.kind with
@@ -1187,7 +1282,8 @@ let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
             (({ scrutinee = SwitchDiscriminant _; fallback = Some fb; _ } as data),
               branches)
           when (not (List.for_all is_trivial (List.nth branches (BranchId.to_int fb)).statements))
-               && not (List.exists block_has_break_continue_return branches)
+               && (not (List.exists block_has_break_continue_return branches))
+               && not (loses_values st (BranchId.to_int fb) branches)
           ->
             let span = st.span in
             let flag = fresh span "fallback_flag" u32_ty in
@@ -1218,6 +1314,109 @@ let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
         | _ -> [ st ]
       in
       { f with body = StructuredBody (finish (map_statement update body.body)) }
+  | _ -> f
+
+(** Give an initial value to the scalar locals whose value flows out of a
+    branching or a loop, in the functions rewritten with flags by
+    [lower_loop_exits], [join_block_escapes] or [hoist_match_fallbacks].
+
+    Those passes route paths through joins of the symbolic contexts, and make
+    the code after a join depend on a flag recording which path was taken. A
+    local initialized on some of the joined paths only is uninitialized
+    ([Bottom]) after the join, and stays so even on the paths (selected by the
+    flag) where it was initialized. For instance, [hoist_match_fallbacks]
+    rewrites [let b = match op { Swp => 1, _ => 0 }] to
+    [flag := 0; match op { Swp => b := 1, _ => flag := 1 };
+     if flag == 1 { b := 0 }], after which [b] is [Bottom].
+
+    For every integer or boolean local [l] (other than the arguments) which is
+    assigned in a branch of a branching or in the body of a loop, and read
+    outside of that statement, we insert [l := 0] (or [false]) at the function
+    entry and right after every [StorageLive l]. At those points [l] is
+    uninitialized, and the borrow checker guarantees that every read of [l] is
+    preceded by an assignment on every path: the inserted value is never
+    observed, except on the paths which the flags rule out. *)
+let init_join_scalars (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let is_flag (l : local) =
+        match l.name with
+        | Some n ->
+            List.exists
+              (fun p -> String.starts_with ~prefix:p n)
+              [ "join_flag"; "fallback_flag"; "loop_exit" ]
+        | None -> false
+      in
+      if not (List.exists is_flag body.locals.locals) then f
+      else
+        let candidate (l : local) =
+          (l.index = LocalId.zero
+          || LocalId.to_int l.index > body.locals.arg_count)
+          && (not (is_flag l))
+          && is_int_or_bool_ty l.local_ty
+        in
+        let candidates =
+          List.fold_left
+            (fun s (l : local) ->
+              if candidate l then LocalId.Set.add l.index s else s)
+            LocalId.Set.empty body.locals.locals
+        in
+        let total = local_reads body.body.statements in
+        let selected = ref LocalId.Set.empty in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              let blocks =
+                match st.kind with
+                | Switch (_, branches) -> branches
+                | Loop b -> [ b ]
+                | _ -> []
+              in
+              let assigned =
+                LocalId.Set.inter candidates (assigned_locals blocks)
+              in
+              (if not (LocalId.Set.is_empty assigned) then
+                 let inside = local_reads [ st ] in
+                 LocalId.Set.iter
+                   (fun id ->
+                     if reads_of total id > reads_of inside id then
+                       selected := LocalId.Set.add id !selected)
+                   assigned);
+              super#visit_statement env st
+          end
+        in
+        visitor#visit_block () body.body;
+        if LocalId.Set.is_empty !selected then f
+        else
+          let init span (id : LocalId.id) : statement =
+            let ty = (List.nth body.locals.locals (LocalId.to_int id)).local_ty in
+            let c =
+              match value_carrier crate ty with
+              | Some (`Scalar c) -> c
+              | _ -> [%internal_error] span
+            in
+            mk_statement span
+              (Assign ({ kind = PlaceLocal id; ty }, Use (Constant c, NoRetag)))
+          in
+          let update (st : statement) : statement list =
+            match st.kind with
+            | StorageLive id when LocalId.Set.mem id !selected ->
+                [ st; init st.span id ]
+            | _ -> [ st ]
+          in
+          let b = map_statement update body.body in
+          let span = f.item_meta.span in
+          let b =
+            {
+              b with
+              statements =
+                List.map (init span) (LocalId.Set.elements !selected)
+                @ b.statements;
+            }
+          in
+          { f with body = StructuredBody { body with body = b } }
   | _ -> f
 
 exception FoundStatement of statement
@@ -3407,6 +3606,767 @@ let fix_anon_const_initializers (crate : crate) (f : fun_decl) : fun_decl =
     }
   else f
 
+(** Make the variant of an enumeration explicit before reading one of its
+    fields when the control-flow doesn't make it explicit.
+
+    A place [(x as V).f] (a downcast) can only be read when [x] has variant [V]
+    (otherwise the behavior is undefined). The symbolic execution knows the
+    variant of [x] inside the branch of a match on [x]; but the passes which
+    make the branchings joinable (see [join_block_escapes]) can move a read of
+    a field of [x] after the join of the branches, where [x] is a symbolic value
+    whose variant is unknown, and an enumeration with several variants can't be
+    expanded without branching. For every read of [(x as V).f] (with [x] an
+    enumeration with several variants) which is not in a branch of a match on
+    [x] for [V] (or after such a read), with no write to [x] in between, we
+    insert before the statement:
+    {[
+      match x { V => {}, _ => undefined_behavior }
+    ]}
+    This is exactly the semantics of the downcast: the other branch is never
+    taken in a defined execution. *)
+let guard_downcasts (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let several_variants (ty : ty) : type_decl_ref option =
+        match ty with
+        | TAdt ({ id; builtin = None; _ } as tref) -> (
+            match TypeDeclId.Map.find_opt id crate.type_decls with
+            | Some { kind = Enum (_ :: _ :: _); _ } -> Some tref
+            | _ -> None)
+        | _ -> None
+      in
+      (* The downcasts of a read place: [(x, V)] for every prefix [(x as V)],
+         innermost first *)
+      let rec downcasts (p : place) : (place * variant_id) list =
+        match p.kind with
+        | PlaceProjection (base, pe) -> (
+            let inner = downcasts base in
+            match pe with
+            | Field (Some vid, _) when several_variants base.ty <> None ->
+                inner @ [ (base, vid) ]
+            | _ -> inner)
+        | PlaceLocal _ | PlaceGlobal _ -> []
+      in
+      (* The downcasts which a written place reads: those under a deref *)
+      let rec written_downcasts (p : place) : (place * variant_id) list =
+        match p.kind with
+        | PlaceProjection (base, Deref) -> downcasts base
+        | PlaceProjection (base, _) -> written_downcasts base
+        | PlaceLocal _ | PlaceGlobal _ -> []
+      in
+      let rec is_prefix (w : place) (p : place) : bool =
+        w = p
+        ||
+        match p.kind with
+        | PlaceProjection (base, _) -> is_prefix w base
+        | _ -> false
+      in
+      (* The places read and the places written by a statement (not
+         looking into the nested blocks) *)
+      let reads_writes (st : statement) : place list * place list =
+        let reads = ref [] in
+        let writes = ref [] in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+            method! visit_block _ _ = ()
+
+            method! visit_operand env op =
+              (match op with
+              | Copy (p, _) | Read p | Move p -> reads := p :: !reads
+              | Constant _ -> ());
+              super#visit_operand env op
+
+            method! visit_rvalue env rv =
+              (match rv with
+              | RvRef (p, kind, _) -> (
+                  reads := p :: !reads;
+                  match kind with
+                  | BMut | BTwoPhaseMut -> writes := p :: !writes
+                  | _ -> ())
+              | RawPtr (p, kind, _) -> (
+                  reads := p :: !reads;
+                  match kind with
+                  | RMut -> writes := p :: !writes
+                  | RShared -> ())
+              | Discriminant p -> reads := p :: !reads
+              | _ -> ());
+              super#visit_rvalue env rv
+
+            method! visit_switch_scrutinee env s =
+              (match s with
+              | SwitchDiscriminant p -> reads := p :: !reads
+              | SwitchValue _ -> ());
+              super#visit_switch_scrutinee env s
+          end
+        in
+        visitor#visit_statement () st;
+        let written =
+          match st.kind with
+          | Assign (p, _) | Call (_, p, _) | SetDiscriminant (p, _) -> [ p ]
+          | Drop (p, _, _, _) -> [ p ]
+          | _ -> []
+        in
+        (!reads, written @ !writes)
+      in
+      (* The places written by a statement, including in its nested blocks *)
+      let deep_writes (st : statement) : place list =
+        let writes = ref [] in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              writes := snd (reads_writes st) @ !writes;
+              (match st.kind with
+              | StorageDead id ->
+                  writes :=
+                    { kind = PlaceLocal id; ty = mk_unit_ty } :: !writes
+              | _ -> ());
+              super#visit_statement env st
+          end
+        in
+        visitor#visit_statement () st;
+        !writes
+      in
+      let same_root (w : place) (p : place) : bool =
+        (* [StorageDead] writes are represented by a place with a dummy type *)
+        let rec root (p : place) =
+          match p.kind with
+          | PlaceProjection (b, _) -> root b
+          | k -> k
+        in
+        match w.kind with
+        | PlaceLocal _ when w.ty = mk_unit_ty -> root w = root p
+        | _ -> false
+      in
+      let kill (facts : (place * variant_id) list) (writes : place list) =
+        List.filter
+          (fun (x, _) ->
+            not (List.exists (fun w -> is_prefix w x || same_root w x) writes))
+          facts
+      in
+      let guard span (x : place) (vid : variant_id) : statement =
+        let tref = Option.get (several_variants x.ty) in
+        let data : switch_data =
+          {
+            scrutinee = SwitchDiscriminant x;
+            branches =
+              [
+                ( {
+                    kind = CDiscriminant (tref, vid);
+                    ty = TScalar (TInteger (Signed Isize));
+                  },
+                  BranchId.zero );
+              ];
+            fallback = Some (BranchId.of_int 1);
+          }
+        in
+        mk_statement span
+          (Switch
+             ( data,
+               [
+                 mk_block span [ mk_statement span Nop ];
+                 mk_block span [ mk_statement span UndefinedBehavior ];
+               ] ))
+      in
+      (* [facts]: the places whose variant is known *)
+      let rec block (facts : (place * variant_id) list) (b : block) : block =
+        let _, statements =
+          List.fold_left
+            (fun (facts, acc) st ->
+              let guards, facts = guards_for facts st in
+              let st, facts = stmt facts st in
+              (facts, List.rev_append (guards @ [ st ]) acc))
+            (facts, []) b.statements
+        in
+        { b with statements = List.rev statements }
+      and guards_for facts (st : statement) =
+        let reads, _ = reads_writes st in
+        let dest_reads =
+          match st.kind with
+          | Assign (p, _) | Call (_, p, _) | SetDiscriminant (p, _) ->
+              written_downcasts p
+          | _ -> []
+        in
+        let needed = List.concat_map downcasts reads @ dest_reads in
+        List.fold_left
+          (fun (guards, facts) (x, vid) ->
+            if List.mem (x, vid) facts then (guards, facts)
+            else (guards @ [ guard st.span x vid ], (x, vid) :: facts))
+          ([], facts) needed
+      and stmt facts (st : statement) : statement * (place * variant_id) list =
+        match st.kind with
+        | Switch (data, branches) ->
+            let branch_facts (i : int) =
+              match data.scrutinee with
+              | SwitchDiscriminant x -> (
+                  match
+                    List.filter
+                      (fun (_, id) -> BranchId.to_int id = i)
+                      data.branches
+                  with
+                  | [ ({ kind = CDiscriminant (_, vid); _ }, _) ] ->
+                      (x, vid) :: facts
+                  | _ -> facts)
+              | SwitchValue _ -> facts
+            in
+            let branches =
+              List.mapi (fun i b -> block (branch_facts i) b) branches
+            in
+            let st = { st with kind = Switch (data, branches) } in
+            (st, kill facts (deep_writes st))
+        | Loop body ->
+            let facts = kill facts (deep_writes st) in
+            ({ st with kind = Loop (block facts body) }, facts)
+        | _ -> (st, kill facts (deep_writes st))
+      in
+      {
+        f with
+        body = StructuredBody { body with body = block [] body.body };
+      }
+  | _ -> f
+
+(** Turn the copies of mutable references into reborrows.
+
+    Charon translates MIR's [deref_copy] (introduced by rustc to dereference a
+    reference stored in a place which is itself behind a reference, e.g. the
+    [&mut] captured by a closure: [tmp = deref_copy ( *self).0; ( *tmp).f = ...])
+    to [Read]. On a mutable reference the copy is a reborrow: [tmp] points to
+    the same location and is only used while the copied reference is unused, so
+    we rewrite [tmp := read p] (with [p : &mut T]) to [tmp := &mut *p], which the
+    symbolic execution supports (it can't copy a mutable borrow). *)
+let deref_copy_to_reborrow (_ : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let update (st : statement) : statement list =
+        match st.kind with
+        | Assign (dst, Use (Read ({ ty = TRef (_, pointee, RMut); _ } as p), _))
+          ->
+            let pointee_place =
+              { kind = PlaceProjection (p, Deref); ty = pointee }
+            in
+            [
+              {
+                st with
+                kind =
+                  Assign
+                    ( dst,
+                      RvRef (pointee_place, BMut, Constant mk_unit_const) );
+              };
+            ]
+        | _ -> [ st ]
+      in
+      {
+        f with
+        body = StructuredBody { body with body = map_statement update body.body };
+      }
+  | _ -> f
+
+(** Lower the reads of the length of a slice through the metadata of a
+    pointer to it, which MIR uses for slice patterns ([match s { [a, b] => ..
+    }]):
+    {[
+      len = copy p.metadata                    // p : &[T] or &mut [T]
+      ~~>
+      r = &( *p); len = core::slice::{[T]}::len(move r)
+
+      t = &raw const x; ...; len = copy t.metadata   // x : [T]
+      ~~>
+      t' = &x; ...; r = &( *t'); len = core::slice::{[T]}::len(move r)
+    ]}
+    The metadata of a pointer to a slice is the length of the slice, which is
+    what [len] returns. For a raw pointer, we only do so if its metadata is
+    its only use: the shared borrow [t'] then lives exactly as long as the
+    raw pointer did, and is only used to read the length. Requires the
+    declaration of [len] in the crate (otherwise the function is left
+    unchanged). *)
+let lower_slice_metadata (crate : crate) (f : fun_decl) : fun_decl =
+  let len_pat = NameMatcher.parse_pattern "core::slice::{[@T]}::len" in
+  let match_name = ExtractName.match_name crate in
+  let len_decl =
+    FunDeclId.Map.values crate.fun_decls
+    |> List.find_opt (fun (d : fun_decl) ->
+           match_name len_pat d.item_meta.name
+           && List.length d.generics.regions = 1
+           && List.length d.generics.types = 1
+           && d.generics.trait_clauses = [])
+  in
+  let slice_elem (ty : ty) : ty option =
+    match ty with
+    | TRef (_, TSlice (t, _), _) | TRawPtr (TSlice (t, _), _) -> Some t
+    | _ -> None
+  in
+  let metadata_of (op : operand) : place option =
+    match op with
+    | Copy ({ kind = PlaceProjection (q, PtrMetadata); _ }, _)
+    | Read { kind = PlaceProjection (q, PtrMetadata); _ }
+    | Move { kind = PlaceProjection (q, PtrMetadata); _ } ->
+        Some q
+    | _ -> None
+  in
+  match (f.body, len_decl) with
+  | StructuredBody body, Some len_decl ->
+      let fresh, finish = fresh_locals body in
+      let changed = ref false in
+      (* The raw pointers to slices whose only uses are reads of their
+         metadata *)
+      let raw_ptrs =
+        let defs = ref LocalId.Map.empty and uses = ref LocalId.Map.empty in
+        let bump m id =
+          m :=
+            LocalId.Map.update id
+              (fun n -> Some (1 + Option.value n ~default:0))
+              !m
+        in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              (match st.kind with
+              | Assign
+                  ( ({ kind = PlaceLocal t; ty = TRawPtr (TSlice _, RShared) } : place),
+                    RawPtr (_, RShared, _) ) ->
+                  bump defs t
+              | _ -> ());
+              super#visit_statement env st
+
+            method! visit_place env p =
+              match p.kind with
+              | PlaceProjection ({ kind = PlaceLocal t; _ }, PtrMetadata) ->
+                  bump uses t
+              | PlaceLocal t -> bump uses t
+              | _ -> super#visit_place env p
+          end
+        in
+        visitor#visit_block () body.body;
+        (* The uses are the definition (its destination) and the reads of the
+           metadata which we rewrite (the operands of [Use]s) *)
+        let metadata_uses = ref LocalId.Map.empty in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              (match st.kind with
+              | Assign (_, Use (op, _)) -> (
+                  match metadata_of op with
+                  | Some { kind = PlaceLocal t; _ } -> bump metadata_uses t
+                  | _ -> ())
+              | _ -> ());
+              super#visit_statement env st
+          end
+        in
+        visitor#visit_block () body.body;
+        LocalId.Map.filter
+          (fun t n ->
+            n = 1
+            && LocalId.Map.find_opt t !uses
+               = Some (1 + Option.value ~default:0 (LocalId.Map.find_opt t !metadata_uses)))
+          !defs
+        |> LocalId.Map.bindings |> List.map fst |> LocalId.Set.of_list
+      in
+      (* The shared borrows replacing those raw pointers *)
+      let borrows = Hashtbl.create 0 in
+      let update (st : statement) : statement list =
+        let mk kind = { st with kind } in
+        match st.kind with
+        | Assign
+            ( { kind = PlaceLocal t; ty = TRawPtr (pointee, RShared) },
+              RawPtr (x, RShared, meta) )
+          when LocalId.Set.mem t raw_ptrs ->
+            changed := true;
+            let r = fresh st.span "slice_ref" (TRef (RErased, pointee, RShared)) in
+            Hashtbl.add borrows t r;
+            [ mk (Assign (r, RvRef (x, BShared, meta))) ]
+        | Assign (dst, Use (op, _)) -> (
+            match metadata_of op with
+            | Some q -> (
+                let q =
+                  match q.kind with
+                  | PlaceLocal t when Hashtbl.mem borrows t -> Hashtbl.find borrows t
+                  | _ -> q
+                in
+                match (q.ty, slice_elem q.ty) with
+                | TRef (_, pointee, _), Some elem ->
+                    changed := true;
+                    let r =
+                      fresh st.span "slice_ref" (TRef (RErased, pointee, RShared))
+                    in
+                    let func =
+                      FnOpRegular
+                        {
+                          kind = Fun len_decl.def_id;
+                          generics =
+                            {
+                              regions = [ RErased ];
+                              types = [ elem ];
+                              const_generics = [];
+                              trait_refs = [];
+                            };
+                        }
+                    in
+                    [
+                      mk
+                        (Assign
+                           ( r,
+                             RvRef
+                               ( { kind = PlaceProjection (q, Deref); ty = pointee },
+                                 BShared,
+                                 Constant mk_unit_const ) ));
+                      mk
+                        (Call
+                           ( { func; args = [ Move r ]; safety = Inherit },
+                             dst,
+                             mk_block st.span [] ));
+                    ]
+                | _ -> [ st ])
+            | None -> [ st ])
+        | _ -> [ st ]
+      in
+      let b = map_statement update body.body in
+      if !changed then { f with body = StructuredBody (finish b) } else f
+  | _ -> f
+
+(** Lower the constant array repetitions [[v; N]] (which Charon leaves as
+    constants, e.g. in the values of statics such as
+    [static S: Set = Set { bits: [0u64; 4] }]) to array aggregates of [N]
+    copies of the constant [v]: [tmp := [v, ..., v]], the operand becoming
+    [move tmp]. A constant is a value, so the repetition is exactly the array of
+    [N] copies of it. We only do so up to a bound on [N] (larger repetitions are
+    left unchanged). *)
+let lower_constant_repeats (_ : crate) (f : fun_decl) : fun_decl =
+  let max_len = 1024 in
+  let repeat_len (c : constant_expr) : int option =
+    match c.kind with
+    | CInteger v ->
+        let n = Scalars.get_val v in
+        if Z.leq n (Z.of_int max_len) then Some (Z.to_int n) else None
+    | _ -> None
+  in
+  match f.body with
+  | StructuredBody body ->
+      let fresh, finish = fresh_locals body in
+      let changed = ref false in
+      let in_statement (st : statement) : statement list =
+        let span = st.span in
+        let new_statements = ref [] in
+        let visitor =
+          object (self)
+            inherit [_] map_statement as super
+
+            method! visit_operand env op =
+              match op with
+              | Constant
+                  ({ kind = CRepeat (v, count, sized); ty = TArray (ety, _, _) }
+                   as c) -> (
+                  match repeat_len count with
+                  | Some n ->
+                      changed := true;
+                      let fields =
+                        List.init n (fun _ ->
+                            self#visit_operand env (Constant v))
+                      in
+                      let tmp = fresh span "repeat" c.ty in
+                      new_statements :=
+                        mk_statement span
+                          (Assign
+                             ( tmp,
+                               Aggregate
+                                 (AggregatedArray (ety, count, sized), fields) ))
+                        :: !new_statements;
+                      Move tmp
+                  | None -> op)
+              | _ -> super#visit_operand env op
+          end
+        in
+        let kind =
+          match st.kind with
+          | Assign (lv, rv) -> Assign (lv, visitor#visit_rvalue () rv)
+          | Assert (({ cond; _ } as assertion), on_failure, on_unwind) ->
+              let cond = visitor#visit_operand () cond in
+              Assert ({ assertion with cond }, on_failure, on_unwind)
+          | Call (({ args; _ } as call), dest, on_unwind) ->
+              let args = List.map (visitor#visit_operand ()) args in
+              Call ({ call with args }, dest, on_unwind)
+          | kind -> kind
+        in
+        List.rev ({ st with kind } :: !new_statements)
+      in
+      let b = map_statement in_statement body.body in
+      if !changed then { f with body = StructuredBody (finish b) } else f
+  | _ -> f
+
+(** Lower the boxes initialized in place to [Box::new].
+
+    Since Rust 1.95, [vec![e0, ..., en]] (and [Box::new([...])] in some
+    contexts) lowers to:
+    {[
+      u = Box::<MaybeUninit<A>>::new_uninit();
+      ( *u).1.0 = [e0, ..., en];   // MaybeUninit::value, ManuallyDrop::value
+      v = move u;                  // any number of such moves
+      x = Box::<MaybeUninit<A>>::assume_init(move v);
+    ]}
+    The write goes through the fields of the union [MaybeUninit], which is
+    opaque. We rewrite this to:
+    {[
+      tmp = [e0, ..., en];
+      u = Box::<A>::new(move tmp);
+      v = move u;
+      x = move v;
+    ]}
+    where the locals [u], [v] now have type [Box<A>]. The allocation happens
+    at the write instead of at [new_uninit] (allocation failure aborts in both
+    cases, which we don't model), and [assume_init] of a box whose contents
+    were written is the identity: this is exactly [Box::new]. We only rewrite
+    when every occurrence of those locals has one of the shapes above
+    (otherwise the function is left unchanged), and only if the crate
+    contains the declaration of [Box::new]. *)
+let lower_box_new_uninit (crate : crate) (f : fun_decl) : fun_decl =
+  let match_name = ExtractName.match_name crate in
+  let fun_matches (pat : string) : FunDeclId.id -> bool =
+    let pat = NameMatcher.parse_pattern pat in
+    fun fid ->
+      match FunDeclId.Map.find_opt fid crate.fun_decls with
+      | Some d -> match_name pat d.item_meta.name
+      | None -> false
+  in
+  let is_new_uninit = fun_matches "alloc::boxed::{alloc::boxed::Box<@T>}::new_uninit" in
+  let is_assume_init =
+    fun_matches
+      "alloc::boxed::{alloc::boxed::Box<core::mem::maybe_uninit::MaybeUninit<@T>>}::assume_init"
+  in
+  let box_new =
+    FunDeclId.Map.values crate.fun_decls
+    |> List.find_opt (fun (d : fun_decl) ->
+           d.item_meta.diagnostic_item = Some "box_new"
+           && List.length d.generics.types = 1
+           && d.generics.trait_clauses = [])
+  in
+  let maybe_uninit_pat = NameMatcher.parse_pattern "core::mem::maybe_uninit::MaybeUninit" in
+  (* [Box<MaybeUninit<A>>] -> [Box<A>] *)
+  let box_init_ty (ty : ty) : ty option =
+    match ty with
+    | TAdt
+        ({
+           generics = { types = [ TAdt { id; generics = { types = [ a ]; _ }; _ } ]; _ };
+           builtin = Some TBox;
+           _;
+         } as box_ref) -> (
+        match TypeDeclId.Map.find_opt id crate.type_decls with
+        | Some d when match_name maybe_uninit_pat d.item_meta.name ->
+            Some
+              (TAdt
+                 { box_ref with generics = { box_ref.generics with types = [ a ] } })
+        | _ -> None)
+    | _ -> None
+  in
+  let call_fun (call : call) : FunDeclId.id option =
+    match call.func with
+    | FnOpRegular { kind = Fun fid; _ } -> Some fid
+    | _ -> None
+  in
+  let local_of (p : place) : LocalId.id option =
+    match p.kind with
+    | PlaceLocal id -> Some id
+    | _ -> None
+  in
+  (* The local written by [( *u).1.0 = _] *)
+  let written_local (p : place) : LocalId.id option =
+    match p.kind with
+    | PlaceProjection
+        ( {
+            kind =
+              PlaceProjection
+                ( { kind = PlaceProjection (u, Deref); _ },
+                  Field (None, value_field) );
+            _;
+          },
+          Field (None, inner_field) )
+      when FieldId.to_int value_field = 1 && FieldId.to_int inner_field = 0 ->
+        local_of u
+    | _ -> None
+  in
+  match (f.body, box_new) with
+  | StructuredBody body, Some box_new ->
+      (* The locals initialized with [new_uninit], then those they are moved
+         to (until a fixed point) *)
+      let chain = ref LocalId.Set.empty in
+      let iter_statements (g : statement -> unit) =
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              g st;
+              super#visit_statement env st
+          end
+        in
+        visitor#visit_block () body.body
+      in
+      iter_statements (fun st ->
+          match st.kind with
+          | Call (call, dest, _) when Option.fold ~none:false ~some:is_new_uninit (call_fun call) -> (
+              match (local_of dest, box_init_ty dest.ty) with
+              | Some u, Some _ -> chain := LocalId.Set.add u !chain
+              | _ -> ())
+          | _ -> ());
+      let in_chain (p : place) =
+        match local_of p with
+        | Some id -> LocalId.Set.mem id !chain
+        | None -> false
+      in
+      let rec close () =
+        let before = LocalId.Set.cardinal !chain in
+        iter_statements (fun st ->
+            match st.kind with
+            | Assign (dst, Use (Move src, _)) when in_chain src -> (
+                match local_of dst with
+                | Some v when dst.ty = src.ty ->
+                    chain := LocalId.Set.add v !chain
+                | _ -> ())
+            | _ -> ());
+        if LocalId.Set.cardinal !chain <> before then close ()
+      in
+      close ();
+      if LocalId.Set.is_empty !chain then f
+      else
+        (* Check that every occurrence of the chain locals has an expected
+           shape: count all the occurrences, and those of the expected shapes *)
+        let count_occurrences (g : LocalId.id -> unit) (st : statement) =
+          let visitor =
+            object
+              inherit [_] iter_statement
+              method! visit_local_id _ id = g id
+            end
+          in
+          visitor#visit_statement () st
+        in
+        let all = ref 0 and expected = ref 0 in
+        let total (st : statement) =
+          count_occurrences
+            (fun id -> if LocalId.Set.mem id !chain then incr all)
+            st
+        in
+        let is_chain_local (p : place) = in_chain p in
+        let shape (st : statement) : int =
+          match st.kind with
+          | StorageLive id | StorageDead id ->
+              if LocalId.Set.mem id !chain then 1 else 0
+          | Call (call, dest, _) -> (
+              match call_fun call with
+              | Some fid when is_new_uninit fid && is_chain_local dest -> 1
+              | Some fid when is_assume_init fid -> (
+                  match call.args with
+                  | [ Move v ] when is_chain_local v -> 1
+                  | _ -> 0)
+              | _ -> 0)
+          | Assign (dst, Use (Move src, _))
+            when is_chain_local src && is_chain_local dst ->
+              2
+          | Assign (dst, _) -> (
+              match written_local dst with
+              | Some id when LocalId.Set.mem id !chain -> 1
+              | _ -> 0)
+          | _ -> 0
+        in
+        (* Only count the statement itself (not its nested blocks, which are
+           visited separately) *)
+        let own (st : statement) : statement =
+          match st.kind with
+          | Call (call, dest, _) ->
+              { st with kind = Call (call, dest, mk_block st.span []) }
+          | Switch (data, branches) ->
+              {
+                st with
+                kind =
+                  Switch (data, List.map (fun _ -> mk_block st.span []) branches);
+              }
+          | Loop _ -> { st with kind = Nop }
+          | _ -> st
+        in
+        iter_statements (fun st ->
+            let st = own st in
+            total st;
+            expected := !expected + shape st);
+        if !all <> !expected then f
+        else
+          let fresh, finish = fresh_locals body in
+          let retype (p : place) : place =
+            if in_chain p then { p with ty = Option.get (box_init_ty p.ty) } else p
+          in
+          let update (st : statement) : statement list =
+            let mk kind = { st with kind } in
+            match st.kind with
+            | Call (call, dest, _) when in_chain dest -> (
+                match call_fun call with
+                | Some fid when is_new_uninit fid -> [ mk Nop ]
+                | _ -> [ st ])
+            | Call (call, dest, _)
+              when Option.fold ~none:false ~some:is_assume_init (call_fun call)
+              -> (
+                match call.args with
+                | [ Move v ] when in_chain v ->
+                    [ mk (Assign (dest, Use (Move (retype v), NoRetag))) ]
+                | _ -> [ st ])
+            | Assign (dst, Use (Move src, rt)) when in_chain src && in_chain dst ->
+                [ mk (Assign (retype dst, Use (Move (retype src), rt))) ]
+            | Assign (dst, rv) -> (
+                match written_local dst with
+                | Some u when LocalId.Set.mem u !chain ->
+                    let u_place =
+                      retype
+                        {
+                          kind = PlaceLocal u;
+                          ty =
+                            (List.nth body.locals.locals (LocalId.to_int u))
+                              .local_ty;
+                        }
+                    in
+                    let a = dst.ty in
+                    let arg, init =
+                      match rv with
+                      | Use (op, _) -> (op, [])
+                      | _ ->
+                          let tmp = fresh st.span "boxed" a in
+                          (Move tmp, [ mk (Assign (tmp, rv)) ])
+                    in
+                    let func =
+                      FnOpRegular
+                        {
+                          kind = Fun box_new.def_id;
+                          generics = mk_generic_args_from_types [ a ];
+                        }
+                    in
+                    init
+                    @ [
+                        mk
+                          (Call
+                             ( { func; args = [ arg ]; safety = Inherit },
+                               u_place,
+                               mk_block st.span [] ));
+                      ]
+                | _ -> [ st ])
+            | _ -> [ st ]
+          in
+          let b = map_statement update body.body in
+          let body = finish b in
+          let locals =
+            List.map
+              (fun (l : local) ->
+                if LocalId.Set.mem l.index !chain then
+                  { l with local_ty = Option.get (box_init_ty l.local_ty) }
+                else l)
+              body.locals.locals
+          in
+          {
+            f with
+            body =
+              StructuredBody { body with locals = { body.locals with locals } };
+          }
+  | _ -> f
+
 let apply_passes (crate : crate) : crate =
   (* Passes that apply to the whole crate *)
   let crate = update_array_default crate in
@@ -3420,11 +4380,17 @@ let apply_passes (crate : crate) : crate =
       ("erase_body_regions", erase_body_regions);
       ("remove_unreachable", remove_unreachable);
       ("erase_unwind_blocks", erase_unwind_blocks);
+      ("lower_box_new_uninit", lower_box_new_uninit);
+      ("lower_constant_repeats", lower_constant_repeats);
+      ("deref_copy_to_reborrow", deref_copy_to_reborrow);
+      ("lower_slice_metadata", lower_slice_metadata);
       ("ret_to_carrier", ret_to_carrier);
       ("lower_loop_exits", lower_loop_exits);
       ("join_block_escapes", join_block_escapes);
       ("hoist_match_fallbacks", hoist_match_fallbacks);
+      ("init_join_scalars", init_join_scalars);
       ("update_loop", update_loops);
+      ("guard_downcasts", guard_downcasts);
       ("remove_useless_joins", remove_useless_joins);
       ( "remove_shallow_borrows_storage_live_dead",
         remove_shallow_borrows_storage_live_dead );

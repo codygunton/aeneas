@@ -326,9 +326,10 @@ and expansion =
           enumeration when the code matches only a few of them). *)
   | ExpandBool of expr * expr
       (** A boolean expansion (i.e, an [if ... then ... else ...]) *)
-  | ExpandInt of integer_type * (integer_value * expr) list * expr
-      (** An integer expansion (i.e, a switch over an integer). The last
-          expression is for the "otherwise" branch. *)
+  | ExpandLiteral of scalar_type * (literal * expr) list * expr
+      (** An expansion of an integer or a [char] (i.e, a switch over an
+          integer or a [char]). The last expression is for the "otherwise"
+          branch. *)
 
 (* Remark: this type doesn't have to be mutually recursive with the other
    types, but it makes it easy to generate the visitors *)

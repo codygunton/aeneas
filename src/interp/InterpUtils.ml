@@ -161,8 +161,20 @@ let mk_fresh_symbolic_value_opt_span (span : Meta.span option)
   let svalue = { sv_id; sv_ty = ty } in
   svalue
 
-let mk_fresh_symbolic_value span (ctx : eval_ctx) =
-  mk_fresh_symbolic_value_opt_span (Some span) ctx.fresh_symbolic_value_id
+(** The types of the symbolic values must not contain erased regions (see
+    [ty_is_rty]): the regions of the value are needed to project it on
+    region abstractions. An erased region here comes from the LLBC (e.g., a
+    monomorphized declaration in which Charon erased a region), so we report
+    the type. *)
+let check_fresh_symbolic_ty (span : Meta.span) (ctx : eval_ctx) (ty : ty) :
+    unit =
+  [%cassert] span (ty_is_rty ty)
+    ("Fresh symbolic value whose type contains erased regions: "
+    ^ ty_to_string ctx ty)
+
+let mk_fresh_symbolic_value span (ctx : eval_ctx) (ty : ty) =
+  check_fresh_symbolic_ty span ctx ty;
+  mk_fresh_symbolic_value_opt_span (Some span) ctx.fresh_symbolic_value_id ty
 
 let mk_fresh_symbolic_value_from_no_regions_ty (span : Meta.span) ctx (ty : ty)
     : symbolic_value =
@@ -179,8 +191,9 @@ let mk_fresh_symbolic_tvalue_opt_span (span : Meta.span option) ctx (rty : ty) :
   let value = VSymbolic value in
   { value; ty }
 
-let mk_fresh_symbolic_tvalue span ctx =
-  mk_fresh_symbolic_tvalue_opt_span (Some span) ctx.fresh_symbolic_value_id
+let mk_fresh_symbolic_tvalue span (ctx : eval_ctx) (ty : ty) =
+  check_fresh_symbolic_ty span ctx ty;
+  mk_fresh_symbolic_tvalue_opt_span (Some span) ctx.fresh_symbolic_value_id ty
 
 let mk_fresh_symbolic_tvalue_from_no_regions_ty (span : Meta.span) ctx (ty : ty)
     : tvalue =
