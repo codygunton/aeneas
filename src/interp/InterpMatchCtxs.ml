@@ -196,10 +196,12 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
             [%cassert] span (is_aignored given_back.value) "Not implemented yet"
         | AEndedSharedLoan (sv, child) ->
             (* TODO: there may be a problem here, because we need the marker which was
-               in [ASharedLoan] to explore the shared value and register its borrows.
-               For now we check that there are no loans/borrows inside. *)
+               in [ASharedLoan] to explore the shared value and register its loans
+               and mutable borrows. For now we check that there are none inside.
+               The shared value may contain shared borrows: we don't register
+               them (see [visit_borrow_content] below). *)
             [%cassert] span
-              (not (tvalue_has_loans_or_borrows (Some span) ctx sv))
+              (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv))
               "Not implemented yet";
             self#visit_tavalue (abs, pm) child
 
@@ -228,6 +230,23 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
         | AEndedMutBorrow _ | AEndedSharedBorrow -> [%craise] span "Unreachable"
 
       method! visit_borrow_id _ _ = [%internal_error] span
+
+      (** Concrete borrows can only appear inside the shared values of shared
+          loans. Those values are frozen: the shared borrows they contain are
+          (copies of) borrows owned by the shared value, not by the region
+          abstraction, which can neither use nor end them (exactly like the
+          borrows inside the symbolic values of shared values, which we don't
+          register either). We thus don't register them: they don't link the
+          abstraction to the abstractions containing the corresponding loans.
+          We do not support mutable borrows there. *)
+      method! visit_borrow_content _ bc =
+        match bc with
+        | VSharedBorrow _ -> ()
+        | VMutBorrow _ | VReservedMutBorrow _ ->
+            [%craise] span
+              "Mutable borrows inside the shared values of region \
+               abstractions are not supported yet"
+
       method! visit_loan_id (abs, pm) lid = register_loan_id abs pm lid
 
       method! visit_ASymbolic (abs, _) pm proj =

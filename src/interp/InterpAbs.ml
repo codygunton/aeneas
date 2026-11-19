@@ -806,10 +806,12 @@ let merge_abstractions_merge_loan_borrow_pairs (span : Meta.span)
             add_avalue child;
             add_avalue given_back
         | AEndedSharedLoan (sv, child) ->
-            (* For now, we treat the case where there are no loans/borrows in the shared
-             value, allowing us to eliminate it altogether. *)
+            (* For now, we treat the case where there are no loans/mutable
+               borrows in the shared value, allowing us to eliminate it
+               altogether: the shared borrows it may contain belong to the
+               ended shared value, and forgetting shared borrows is sound. *)
             [%cassert] span
-              (not (tvalue_has_loans_or_borrows (Some span) ctx sv))
+              (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv))
               "Unimplemented";
             add_avalue child
         | AIgnoredMutLoan _ -> [%craise] span "Unimplemented"

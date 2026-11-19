@@ -1238,16 +1238,23 @@ let mk_collapse_ctx_merge_duplicate_funs (span : Meta.span)
     (* Same remarks as for [merge_amut_borrows].
 
        This time we need to also merge the shared values. We rely on the
-       join matcher [JM] to do so.
+       join matcher [JM] to do so. The shared values may contain shared
+       borrows (which belong to the shared values): we check below that
+       matching them doesn't require introducing fresh region abstractions
+       (which we would lose).
     *)
     [%sanity_check] span
-      (not (value_has_loans_or_borrows (Some span) ctx sv0.value));
+      (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv0));
     [%sanity_check] span
-      (not (value_has_loans_or_borrows (Some span) ctx sv1.value));
+      (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv1));
 
     let ty = ty0 in
     let child = child0 in
+    let nabs = !S.nabs in
     let sv = M.match_tvalues ctx ctx sv0 sv1 in
+    [%cassert] span (!S.nabs == nabs)
+      "Merging shared loans whose shared values contain distinct borrows is \
+       not supported yet";
     let value = ALoan (ASharedLoan (PNone, ids, sv, child)) in
     { value; ty }
   in
@@ -1326,19 +1333,25 @@ let merge_into_first_abstraction (span : Meta.span) (abs_kind : abs_kind)
     (Some merge_funs) ctx aid0 aid1
 
 (** Check whether a non-frozen region abstraction contains a shared loan whose
-    shared value contains concrete borrows.
+    shared value contains concrete mutable borrows.
 
     The collapse doesn't support this case: when computing the maps from
     abstractions to borrows/loans (see
     {!InterpMatchCtxs.compute_abs_borrows_loans_maps}) we can't register such
-    borrows. We use this function to fail early with a recoverable error in
-    {!collapse_ctx}. *)
-let ctx_has_borrows_in_shared_loans_of_non_frozen_abs (ctx : eval_ctx) : bool =
+    borrows (the shared borrows are not registered: they belong to the frozen
+    shared value, not to the abstraction). We use this function to fail early
+    with a recoverable error in {!collapse_ctx}. *)
+let ctx_has_mut_borrows_in_shared_loans_of_non_frozen_abs (ctx : eval_ctx) :
+    bool =
   let frozen = ctx_get_frozen_abs_set ctx in
   let has_borrows =
     object
       inherit [_] iter_tvalue
-      method! visit_borrow_content _ _ = raise Found
+
+      method! visit_borrow_content _ bc =
+        match bc with
+        | VSharedBorrow _ -> ()
+        | VMutBorrow _ | VReservedMutBorrow _ -> raise Found
     end
   in
   let visitor =
@@ -1369,13 +1382,13 @@ let collapse_ctx config (span : Meta.span)
     ~(with_abs_conts : bool) (ctx : eval_ctx) : eval_ctx =
   [%ldebug "Initial ctx:\n" ^ eval_ctx_to_string ctx];
   (* The collapse doesn't support shared loans whose shared value contains
-     borrows in the abstractions it may modify: we check this here so that the
-     error is recoverable (if it is allowed, the caller can then decide not to
-     join, for instance by duplicating the code after a branching). *)
+     mutable borrows in the abstractions it may modify: we check this here so
+     that the error is recoverable (if it is allowed, the caller can then decide
+     not to join, for instance by duplicating the code after a branching). *)
   [%cassert_recover] recoverable span
-    (not (ctx_has_borrows_in_shared_loans_of_non_frozen_abs ctx))
+    (not (ctx_has_mut_borrows_in_shared_loans_of_non_frozen_abs ctx))
     "Joining region abstractions containing shared loans whose shared value \
-     contains borrows is not supported yet";
+     contains mutable borrows is not supported yet";
   let merge_funs =
     mk_collapse_ctx_merge_duplicate_funs span fresh_abs_kind ~recoverable
       ~with_abs_conts ctx

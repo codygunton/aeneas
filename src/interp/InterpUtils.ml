@@ -610,6 +610,15 @@ let value_has_loans_or_borrows span (ctx : eval_ctx) (v : value) : bool =
 let tvalue_has_loans_or_borrows span (ctx : eval_ctx) (v : tvalue) : bool =
   ValuesUtils.value_has_loans_or_borrows span ctx.type_ctx.type_infos v.value
 
+(** Check if a value has loans or mutable borrows (concrete mutable borrows, or
+    symbolic values containing mutable borrows): the value may contain shared
+    borrows. We use it for the shared values of shared loans in region
+    abstractions, whose shared borrows belong to the (frozen) shared value. *)
+let tvalue_has_loans_or_mut_borrows span (ctx : eval_ctx) (v : tvalue) : bool
+    =
+  ValuesUtils.value_has_loans v.value
+  || ValuesUtils.value_has_mut_borrows span ctx.type_ctx.type_infos v.value
+
 (** See {!ValuesUtils.value_has_loans}. *)
 let value_has_loans (v : value) : bool = ValuesUtils.value_has_loans v
 

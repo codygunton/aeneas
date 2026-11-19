@@ -34,6 +34,7 @@ package «tests» {}
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvJoinInnerLoop
 @[default_target] lean_lib ClifvJoinScalarInit
+@[default_target] lean_lib ClifvJoinSharedLoans
 @[default_target] lean_lib ClifvLoopEarlyReturn
 @[default_target] lean_lib ClifvLoopOuterBreak
 @[default_target] lean_lib ClifvLoopOuterContinue
