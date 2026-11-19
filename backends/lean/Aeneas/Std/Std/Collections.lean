@@ -12,6 +12,7 @@ Lookups compare keys with `Eq` (through `Borrow`), as hashbrown does on hash-tag
 are not hashed, which is unobservable for pure `Hash` implementations. On an existing key,
 `insert` replaces the value and keeps the old key (`HashSet::insert` keeps the old element). -/
 module
+public import Aeneas.Std.Alloc.Alloc
 public import Aeneas.Std.Alloc.Util
 public import Aeneas.Std.Core.Borrow
 public import Aeneas.Std.Core.Cmp

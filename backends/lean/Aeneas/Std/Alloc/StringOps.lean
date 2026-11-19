@@ -8,6 +8,7 @@ public import Aeneas.Std.Core.Borrow
 public import Aeneas.Std.Core.Hash
 public import Aeneas.Std.Core.Fmt
 public import Aeneas.Std.StringDef
+public import Aeneas.Std.CoreStr
 public section
 
 namespace Aeneas.Std
@@ -119,15 +120,15 @@ def Slice.Insts.AllocSliceJoinShared0StrString.join {S : Type _}
   let bytes ← AllocModel.slice bytes
   ofStr bytes
 
-/-- `str::replace`: copies the haystack, substituting `to` for every non-overlapping match of
+/-- `str::replace`: copies the haystack, substituting `to'` for every non-overlapping match of
     the pattern, leftmost first (`match_indices`). -/
 @[expose, rust_fun "alloc::str::{str}::replace"]
 def alloc.str.Str.replace {P : Type _} (patternInst : core.str.pattern.Pattern P) (s : Str)
-    (pat : P) (to : Str) : Result String := do
-  let matches := core.str.pattern.Pattern.matchIndices patternInst s pat
-  let (out, lastEnd) := matches.foldl (fun (acc : List U8 × Nat) (m : Nat × Nat) =>
+    (pat : P) (to' : Str) : Result String := do
+  let found := core.str.pattern.Pattern.matchIndices patternInst s pat
+  let (out, lastEnd) := found.foldl (fun (acc : List U8 × Nat) (m : Nat × Nat) =>
     let (out, lastEnd) := acc
-    (out ++ (s.val.drop lastEnd).take (m.1 - lastEnd) ++ to.val, m.1 + m.2)) ([], 0)
+    (out ++ (s.val.drop lastEnd).take (m.1 - lastEnd) ++ to'.val, m.1 + m.2)) ([], 0)
   let bytes ← AllocModel.slice (out ++ s.val.drop lastEnd)
   ofStr bytes
 

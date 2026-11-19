@@ -1,4 +1,8 @@
 //@ [!lean] skip
+//@ [lean] known-failure
+//@ [lean] continue-on-error
+// `core::str::pattern::Pattern` (a GAT) cannot be translated (an error, hence the known
+// failure): its methods are dropped, the library models the impls used here.
 #![feature(register_tool)]
 #![register_tool(verify)]
 // Models of `alloc::string`, `alloc::str`, `alloc::fmt` and `alloc::borrow` items.

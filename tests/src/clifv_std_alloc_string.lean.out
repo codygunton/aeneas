@@ -1,0 +1,40 @@
+[[92mInfo[39m ] Imported: tests/llbc/clifv_std_alloc_string.llbc
+[[91mError[39m] Unimplemented
+Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Compiler source: symbolic/SymbolicToPureTypes.ml, line 392
+[[93mWarn[39m ] Could not translate the signature of method 'core::str::pattern::Pattern::0' because of previous error
+Definition span: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Compiler source: Translate.ml, line 489
+
+[[93mWarn[39m ] Found an associated type in a trait declaration; trait associated types are usually lifted to become parameters of the trait definition, but this can fail with mutually-recursive traits as well as GATs. Aeneas cannot handle such types today, and the generated code will likely be incorrect.
+Trait declaration: core::str::pattern::Pattern
+Source: Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+
+This definition is (transitively) used at the following locations:
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 45:12-45:39
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 47:12-47:36
+
+Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Compiler source: symbolic/SymbolicToPure.ml, line 251
+
+[[91mError[39m] Can not extract trait associated types with parameters
+Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Compiler source: symbolic/SymbolicToPure.ml, line 263
+[[93mWarn[39m ] Could not translate the trait declaration 'core::str::pattern::Pattern because of previous error
+Name pattern: 'core::str::pattern::Pattern'
+Definition span: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+
+This definition is (transitively) used at the following locations:
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 45:12-45:39
+Source: 'tests/src/clifv_std_alloc_string.rs', lines 47:12-47:36
+
+Source: '/rustc/library/core/src/str/pattern.rs', lines 99:0-99:24
+Compiler source: Translate.ml, line 673
+
+[[91mError[39m] Not_found
+Compiler source: <stdlib>, line 0
+
+[[92mInfo[39m ] Generated the partial file (because of 2 errors, including 2 unique errors): tests/lean/ClifvStdAllocString.lean
+[[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
+[[92mInfo[39m ] Total execution time: 0.961854 seconds

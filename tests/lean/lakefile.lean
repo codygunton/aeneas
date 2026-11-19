@@ -41,8 +41,15 @@ package «tests» {}
 @[default_target] lean_lib ClifvNestedBorrowCtx
 @[default_target] lean_lib ClifvNestedLoopReturn
 @[default_target] lean_lib ClifvStaticSharedBorrows
+@[default_target] lean_lib ClifvStdAllocCollections
+@[default_target] lean_lib ClifvStdAllocHash
+@[default_target] lean_lib ClifvStdAllocString
+@[default_target] lean_lib ClifvStdAllocVec
+@[default_target] lean_lib ClifvStdCoreMisc
 @[default_target] lean_lib ClifvStdFloat
+@[default_target] lean_lib ClifvStdIterAdapters
 @[default_target] lean_lib ClifvStdNum
+@[default_target] lean_lib ClifvStdSlice
 @[default_target] lean_lib ClifvTraitMethodSigFailure
 @[default_target] lean_lib ClifvTupleName
 @[default_target] lean_lib Closures

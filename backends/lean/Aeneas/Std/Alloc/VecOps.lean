@@ -178,13 +178,6 @@ def alloc.vec.into_iter.IntoIter.Insts.CoreIterTraitsIteratorIterator.count {T :
     (it : alloc.vec.into_iter.IntoIter T) : Result Usize :=
   ok (alloc.vec.Vec.len it)
 
-@[expose, rust_fun
-  "alloc::vec::into_iter::{core::iter::traits::iterator::Iterator<alloc::vec::into_iter::IntoIter<@T, @A>, @T>}::size_hint"
-  (keepParams := [true, false])]
-def alloc.vec.into_iter.IntoIter.Insts.CoreIterTraitsIteratorIterator.size_hint {T : Type _}
-    (it : alloc.vec.into_iter.IntoIter T) : Result (Usize × (Option Usize)) :=
-  ok (alloc.vec.Vec.len it, some (alloc.vec.Vec.len it))
-
 /-! ## Trait implementations for `Vec` -/
 
 /-- `impl Hash for [T]`: `state.write_length_prefix(len); T::hash_slice(self, state)`. -/
