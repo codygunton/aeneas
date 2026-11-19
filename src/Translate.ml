@@ -1628,12 +1628,46 @@ let extract_definitions (out : string -> unit) (config : gen_config)
           ExtractBase.IdSet.add ext_id !ExtractBase.dropped_items)
       (group_items g)
   in
+  (* The formatter rejects the boxes nested deeper than its maximal indentation
+     to the left, which breaks the layout-sensitive syntax of Lean (the
+     continuation of a [let] at the column of the [let] starts a new statement).
+     We print the groups whose functions contain deeply nested conditionals
+     with a wide geometry. *)
+  let max_switch_depth (g : declaration_group) : int =
+    let depth = ref 0 in
+    let visitor =
+      object
+        inherit [_] Pure.iter_expr as super
+
+        method! visit_Switch d scrut switch =
+          depth := Stdlib.max !depth (d + 1);
+          super#visit_Switch (d + 1) scrut switch
+      end
+    in
+    let visit_fun (f : Pure.fun_decl) =
+      Option.iter (fun (b : Pure.fun_body) -> visitor#visit_texpr 0 b.body) f.body
+    in
+    (match g with
+    | FunGroup g ->
+        List.iter
+          (fun id ->
+            Option.iter
+              (fun (pf : pure_fun_translation) ->
+                visit_fun pf.f;
+                List.iter visit_fun pf.loops)
+              (ExtractBase.ctx_lookup_fun_decl_info ctx id))
+          (Charon.GAstUtils.g_declaration_group_to_list g)
+    | _ -> ());
+    !depth
+  in
   List.iter
     (fun g ->
       let buf = Buffer.create 4096 in
       let fmt = Format.formatter_of_buffer buf in
       FormatCompat.use_byte_width fmt;
-      Format.pp_set_margin fmt 80;
+      if Config.backend () = Lean && max_switch_depth g > 12 then
+        Format.pp_set_geometry fmt ~max_indent:1999 ~margin:2000
+      else Format.pp_set_margin fmt 80;
       Format.pp_open_vbox fmt 0;
       let num_errors = List.length !Errors.error_list - !trial_errors in
       let num_admits = !Errors.extracted_admits in

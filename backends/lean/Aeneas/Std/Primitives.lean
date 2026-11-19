@@ -4,6 +4,7 @@ public meta import Aeneas.Std.Global
 public import Aeneas.Extract
 public import AeneasMeta.BvEnumToBitVec
 public import Aeneas.Data.Coinductive.ITree
+import all Init.Internal.Order.Basic
 public import Aeneas.Data.Coinductive.Effect
 public section
 
@@ -455,6 +456,42 @@ def loop {α : Type u} {β : Type v} (body : α → Result (ControlFlow α β)) 
   | ControlFlow.cont x => loop body x
   | ControlFlow.done x => ok x
 partial_fixpoint
+
+end
+
+section
+open Lean.Order
+
+/-- `loop` is monotone in its body. -/
+theorem loop_le_of_le {α : Type u} {β : Type v} {body1 body2 : α → Result (ControlFlow α β)}
+    (h : body1 ⊑ body2) : loop body1 ⊑ loop body2 := by
+  apply loop.fixpoint_induct body1 (fun g => g ⊑ loop body2)
+  · unfold Lean.Order.admissible
+    intro c hc hall
+    exact csup_le hc hall
+  · intro g hg x
+    rw [loop.eq_def (body := body2)]
+    have hm : monotone (fun (p : PProd (α → Result (ControlFlow α β)) (α → Result β)) =>
+        bind (p.1 x) (fun r => match r with
+          | ControlFlow.cont y => p.2 y
+          | ControlFlow.done y => ok y)) := by
+      monotonicity
+      · intro a b hab
+        exact hab.1 x
+      · intro a b hab r
+        cases r
+        · exact hab.2 _
+        · exact PartialOrder.rel_refl
+    exact hm ⟨body1, g⟩ ⟨body2, loop body2⟩ ⟨h, hg⟩
+
+/-- Allows `partial_fixpoint` definitions whose recursive calls happen inside the body of a
+`loop` (a recursive function containing a loop). -/
+@[partial_fixpoint_monotone]
+theorem loop_mono {α : Type u} {β : Type v} {γ : Sort w} [PartialOrder γ]
+    (body : γ → α → Result (ControlFlow α β)) (x : α) (hmono : monotone body) :
+    monotone (fun f => loop (body f) x) := by
+  intro f1 f2 hf
+  exact loop_le_of_le (hmono f1 f2 hf) x
 
 end
 

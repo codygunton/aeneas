@@ -28,6 +28,8 @@ package «tests» {}
 @[default_target] lean_lib CastSigned
 @[default_target] lean_lib ChunksExact
 @[default_target] lean_lib ClifvAssocTypeClauses
+@[default_target] lean_lib ClifvBoolSwitchLet
+@[default_target] lean_lib ClifvDeepNesting
 @[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvJoinInnerLoop
@@ -36,10 +38,14 @@ package «tests» {}
 @[default_target] lean_lib ClifvLoopOuterContinue
 @[default_target] lean_lib ClifvMonoGenerics
 @[default_target] lean_lib ClifvMonoLocal
+@[default_target] lean_lib ClifvMonoMethodGenerics
 @[default_target] lean_lib ClifvMonoRefs
 @[default_target] lean_lib ClifvMonoStd
 @[default_target] lean_lib ClifvNestedBorrowCtx
 @[default_target] lean_lib ClifvNestedLoopReturn
+@[default_target] lean_lib ClifvRecursiveLoop
+@[default_target] lean_lib ClifvRefImplName
+@[default_target] lean_lib ClifvResultVariant
 @[default_target] lean_lib ClifvStaticSharedBorrows
 @[default_target] lean_lib ClifvStdAllocCollections
 @[default_target] lean_lib ClifvStdAllocHash
@@ -50,6 +56,8 @@ package «tests» {}
 @[default_target] lean_lib ClifvStdIterAdapters
 @[default_target] lean_lib ClifvStdNum
 @[default_target] lean_lib ClifvStdSlice
+@[default_target] lean_lib ClifvStringEscape
+@[default_target] lean_lib ClifvStubFailedItems
 @[default_target] lean_lib ClifvTraitMethodSigFailure
 @[default_target] lean_lib ClifvTupleName
 @[default_target] lean_lib Closures

@@ -84,7 +84,7 @@ Source: 'tests/src/clifv_stub_failed_items.rs', lines 26:0-28:1
 Compiler source: extract/ExtractBase.ml, line 478
 [[91mError[39m] Could not lookup the translated function, probably because of an error which happened before
 Source: 'tests/src/clifv_stub_failed_items.rs', lines 55:0-57:1
-Compiler source: extract/Extract.ml, line 3459
+Compiler source: extract/Extract.ml, line 3498
 [[92mInfo[39m ] Generated the partial file (because of 15 errors, including 7 unique errors): tests/lean/ClifvStubFailedItems.lean
 [[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
-[[92mInfo[39m ] Total execution time: 0.339067 seconds
+[[92mInfo[39m ] Total execution time: 0.342756 seconds

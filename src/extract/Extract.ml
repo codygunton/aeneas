@@ -1436,7 +1436,39 @@ and extract_lets (span : Meta.span) (ctx : extraction_ctx) (fmt : F.formatter)
           | Lean -> false
           | _ -> monadic
         in
+        (* Lean elaborates the branches of a conditional before their common
+           type is known: a branch returning a comparison ([ok (x < y)]) then
+           makes the bound value a [Prop], and a branch returning a polymorphic
+           constructor ([ok (some none, 2#u32)]) leaves metavariables in the
+           type. Ascribe the type of such bound conditionals. *)
+        let ascribe =
+          let rec strip_meta (e : texpr) =
+            match e.e with
+            | Meta (_, e) -> strip_meta e
+            | _ -> e
+          in
+          let rec needs_ascription (ty : ty) =
+            match ty with
+            | TLiteral TBool -> true
+            | TAdt (TAdtId _, generics) when generics.types <> [] -> true
+            | TAdt (_, generics) -> List.exists needs_ascription generics.types
+            | TArrow (t0, t1) -> needs_ascription t0 || needs_ascription t1
+            | _ -> false
+          in
+          backend () = Lean && monadic
+          && (match (strip_meta re).e with
+             | Switch _ -> true
+             | _ -> false)
+          && needs_ascription lv.ty
+        in
+        if ascribe then F.pp_print_string fmt "(";
         extract_texpr span ctx fmt ~inside:false ~inside_do:inside_do_rhs re;
+        if ascribe then (
+          F.pp_print_space fmt ();
+          F.pp_print_string fmt ":";
+          F.pp_print_space fmt ();
+          extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside:false re.ty;
+          F.pp_print_string fmt ")");
         F.pp_close_box fmt ();
         (ctx, end_let)
     in
@@ -1869,7 +1901,12 @@ let extract_fun_parameters (space : bool ref) (ctx : extraction_ctx)
 let extract_fun_input_parameters_types (span : span) (ctx : extraction_ctx)
     (fmt : F.formatter) (inputs : ty list) : unit =
   let extract_param (ty : ty) : unit =
-    let inside = false in
+    (* An arrow-typed input needs parentheses: arrows associate to the right *)
+    let inside =
+      match ty with
+      | TArrow _ -> true
+      | _ -> false
+    in
     extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside ty;
     F.pp_print_space fmt ();
     extract_arrow fmt ();
@@ -2161,7 +2198,9 @@ let extract_fun_decl_gen ?(stub : bool = false) (ctx : extraction_ctx)
   F.pp_open_hvbox fmt 0;
   (* Extract the attributes *)
   let rust_attributes =
-    if backend () = Lean then
+    (* A stub is an [opaque] constant: the loop attributes (which register
+       unfolding lemmas) do not apply to it *)
+    if backend () = Lean && not stub then
       match def.loop_id with
       | None -> []
       | Some (_, false) -> [ "rust_loop" ]
