@@ -50,6 +50,17 @@ module NameMatcherMap = struct
       (g : Types.generic_args) (m : 'a t) : 'a option =
     NMM.find_with_generics_opt ctx config name g m
 
+  (** Lookup the value registered for an instantiation of an item, that is for
+      a pattern which instantiates the generics of the item (for instance:
+      [core::option::{core::option::Option<@T>}::unwrap<&'a mut @T>]). Unlike
+      in {!find_with_generics_opt}, the variables of the pattern may match any
+      type, not only type variables. *)
+  let find_instantiation_opt (ctx : ctx) (name : Types.name)
+      (g : Types.generic_args) (m : 'a t) : 'a option =
+    NMM.find_with_generics_opt ctx
+      { config with map_vars_to_vars = false }
+      name g m
+
   let mem (ctx : ctx) (name : Types.name) (m : 'a t) : bool =
     NMM.mem ctx config name m
 

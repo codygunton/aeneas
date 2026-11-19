@@ -8,6 +8,7 @@ Calls to the Rust standard library are translated to *models*: Lean definitions 
 - **Annotate it** (`rust_type`, `rust_const`, `rust_fun`, `rust_trait`, `rust_trait_impl`; options in `Aeneas/Extract/Extract.lean`), and **link the Rust documentation** in its docstring: `` /-- Model of `Option::map` (<https://doc.rust-lang.org/std/option/enum.Option.html#method.map>). -/ ``.
 - **Follow Rust where it matters**: the same calls in the same order, and `fail` where Rust panics.
 - **Keep it unfoldable**: `@[expose]`, no `private`, no `partial` (use `partial_fixpoint`).
+- **Model the instantiations with mutable borrows** a call needs: when a call instantiates the type parameters of a function with types containing mutable borrows (`Option::<&mut T>::unwrap`), it also returns backward functions which give back the values written through the borrows, which the model of the function doesn't return. Such a call uses a dedicated model whose `rust_fun` pattern instantiates all the generics of the function, regions first (`"core::option::{core::option::Option<@T>}::expect<'b, &'a mut @T>"`), with the same parameters and effect as the model of the function (example: `core.option.Option.unwrap.mut`). Without one, Aeneas reports an error for the call.
 - **Run `make extract-lean-std`** and commit `src/extract/ExtractBuiltinLean.ml` (CI checks it).
 
 ## 2. The documentation's examples as tests

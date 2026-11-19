@@ -53,6 +53,12 @@ let match_name_with_generics_find_opt (ctx : trans_ctx) (name : Types.name)
   let mctx = NameMatcher.ctx_from_crate ctx.crate in
   ExtractBuiltin.NameMatcherMap.find_with_generics_opt mctx name generics m
 
+let match_name_instantiation_find_opt (ctx : trans_ctx) (name : Types.name)
+    (generics : Types.generic_args) (m : 'a NameMatcher.NameMatcherMap.t) :
+    'a option =
+  let mctx = NameMatcher.ctx_from_crate ctx.crate in
+  ExtractBuiltin.NameMatcherMap.find_instantiation_opt mctx name generics m
+
 let trait_name_with_generics_to_simple_name (ctx : trans_ctx)
     ?(prefix : Types.name option = None) (n : Types.name)
     (p : Types.generic_params) (g : Types.generic_args) : string list =

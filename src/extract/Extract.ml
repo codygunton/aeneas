@@ -1035,10 +1035,17 @@ and extract_function_call (span : Meta.span) (ctx : extraction_ctx)
 
       (* Sanity check: HOL4 doesn't support const generics *)
       [%sanity_check] span (generics.const_generics = [] || backend () <> HOL4);
+      (* The model of an instantiation has the same parameters as the model of
+         the function: we use the information of the function declaration *)
+      let decl_fun_id =
+        match fun_id with
+        | Pure (ModelInstantiation (id, _)) -> FromLlbc (FunId id, None)
+        | _ -> fun_id
+      in
       (* Compute the information about the explicit/implicit input type parameters *)
       let explicit =
         try
-          match fun_id with
+          match decl_fun_id with
           | FromLlbc (FunId fun_decl_id, lp_id) -> begin
               (* Lookup the function to retrieve the signature information *)
               let trans_fun =
@@ -1090,12 +1097,6 @@ and extract_function_call (span : Meta.span) (ctx : extraction_ctx)
           | Pure ToResult ->
               Some
                 { explicit_types = [ Implicit ]; explicit_const_generics = [] }
-          | Pure ResultUnwrapMut ->
-              Some
-                {
-                  explicit_types = [ Implicit; Implicit ];
-                  explicit_const_generics = [];
-                }
           | Pure _ -> None
         with CFailure _ ->
           (* Fallback if, for instance, we could not lookup the declaration *)
@@ -1109,7 +1110,7 @@ and extract_function_call (span : Meta.span) (ctx : extraction_ctx)
          argument for `Vec::new`).
       *)
       let types_explicit_traits =
-        match fun_id with
+        match decl_fun_id with
         | FromLlbc (FunId id, _) ->
             fun_builtin_filter_types_trait_clauses (ty_to_string ctx)
               (trait_ref_to_string ctx) id generics.types explicit

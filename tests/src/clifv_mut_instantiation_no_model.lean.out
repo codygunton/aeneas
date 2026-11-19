@@ -1,0 +1,10 @@
+[[92mInfo[39m ] Imported: tests/llbc/clifv_mut_instantiation_no_model.llbc
+[[91mError[39m] Unsupported: the call to clifv_mut_instantiation_no_model::id instantiates its generics with types containing mutable borrows (<&'6 mut u32>), which introduces backward functions the signature of the function doesn't have, and there is no model for this instantiation (a builtin definition with an instantiated name pattern, e.g. [<pattern of the function><&'a mut @T>])
+Source: 'tests/src/clifv_mut_instantiation_no_model.rs', lines 16:0-19:1
+Compiler source: symbolic/SymbolicToPureExpressions.ml, line 266
+[[91mError[39m] Unsupported: the call to core::option::{core::option::Option<T>}::ok_or instantiates its generics with types containing mutable borrows (<&'18 mut u32, u32>), which introduces backward functions the signature of the function doesn't have, and there is no model for this instantiation (a builtin definition with an instantiated name pattern, e.g. [<pattern of the function><&'a mut @T>])
+Source: 'tests/src/clifv_mut_instantiation_no_model.rs', lines 22:0-26:1
+Compiler source: symbolic/SymbolicToPureExpressions.ml, line 266
+[[92mInfo[39m ] Generated the partial file (because of 2 errors, including 1 unique errors): tests/lean/ClifvMutInstantiationNoModel.lean
+[[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
+[[92mInfo[39m ] Total execution time: 0.523090 seconds

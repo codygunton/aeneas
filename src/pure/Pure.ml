@@ -135,10 +135,18 @@ type pure_builtin_fun_id =
           We use this when using `ok ...` would result in let-bindings getting
           simplified away (in a backend like Lean). *)
   | Discriminant  (** Discriminant read *)
-  | ResultUnwrapMut
-      (** Temporary fix: the
-          [core::result::{core::result::Result<@T, @E>}::unwrap] instantiated
-          with mutable borrows - TODO: remove *)
+  | ModelInstantiation of fun_decl_id * string
+      (** A call to a builtin function whose type parameters are instantiated
+          with types containing mutable borrows, in a way which introduces
+          backward functions its (generic) signature doesn't have: such a call
+          is modeled by a dedicated definition of the backend library,
+          registered with a name pattern instantiating the generics of the
+          function (e.g., [core::option::{core::option::Option<@T>}::unwrap<&'a
+           mut @T>]). The string is the name of this definition.
+
+          The definition has the same parameters as the model of the generic
+          function (we use the information of the function declaration to
+          filter and print the generic arguments). *)
   | GetTarget
       (** Returns the compilation target as a pure string, i.e., a value of type
           [TPureString].

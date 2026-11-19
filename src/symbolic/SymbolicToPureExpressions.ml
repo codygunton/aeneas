@@ -225,6 +225,84 @@ let compute_back_fun_name (ctx : bs_ctx) (decl : LlbcAst.fun_decl) : string =
           (* We shouldn't get there *)
           [%craise] decl.item_meta.span "Unexpected")
 
+(** Compute the function to call, accounting for the calls which instantiate
+    the type parameters of the callee with types containing mutable borrows.
+
+    The backward functions of a call are computed from the *instantiated*
+    signature: for instance, [Option::<&mut T>::unwrap] returns the unwrapped
+    value together with a backward function giving back an [Option<T>], while
+    the generic signature of [Option::unwrap] has no backward function. The
+    translation (or the model) of the callee follows its generic signature: we
+    can call it only if the instantiation introduces no backward functions.
+    Otherwise, we call the model registered for this instantiation in the
+    backend library, that is the definition whose name pattern instantiates the
+    generics of the function (for instance:
+    [core::option::{core::option::Option<@T>}::unwrap<&'a mut @T>]), and fail
+    if there is none, rather than generating ill-typed code which would drop
+    the values written through the borrows.
+
+    [num_backs]: the number of backward functions of the instantiated signature.
+
+    Remark: [Box::new] is handled separately (see
+    [translate_function_call_aux]). *)
+let translate_call_fun_id (ctx : bs_ctx) (call : S.call) (fid : A.fn_ptr_kind)
+    (fid_t : fn_ptr_kind) (num_backs : int) : fun_id =
+  let default = FromLlbc (fid_t, None) in
+  let instantiates_mut_borrows =
+    List.exists
+      (TypesUtils.ty_has_mut_borrows ctx.type_ctx.type_infos)
+      call.generics.types
+  in
+  let introduces_backs () =
+    match lookup_fn_ptr_sig ctx fid with
+    | None -> false
+    | Some sigs ->
+        let generic_backs = compute_back_tys sigs.dsg.fun_ty in
+        List.length (List.filter Option.is_some generic_backs) <> num_backs
+  in
+  if not (instantiates_mut_borrows && introduces_backs ()) then default
+  else
+    let unsupported (name : string) =
+      [%craise] ctx.span
+        ("Unsupported: the call to " ^ name
+       ^ " instantiates its generics with types containing mutable borrows ("
+        ^ ctx_generic_args_to_string ctx call.generics
+        ^ "), which introduces backward functions the signature of the \
+           function doesn't have, and there is no model for this \
+           instantiation (a builtin definition with an instantiated name \
+           pattern, e.g. [<pattern of the function><&'a mut @T>])")
+    in
+    match fid with
+    | TraitMethod (trait_ref, method_id) ->
+        unsupported
+          (Charon.GAstUtils.get_method_name ctx.decls_ctx.crate
+             trait_ref.trait_decl_ref.id method_id)
+    | Fun id -> (
+        let decl = FunDeclId.Map.find id ctx.fun_ctx.llbc_fun_decls in
+        let name = decl.item_meta.name in
+        if decl.item_meta.diagnostic_item = Some "box_new" then default
+        else
+          let funs_map = ExtractBuiltin.builtin_funs_map () in
+          match
+            ( match_name_find_opt ctx.decls_ctx name funs_map,
+              match_name_instantiation_find_opt ctx.decls_ctx name call.generics
+                funs_map )
+          with
+          | Some base, Some inst ->
+              (* We reuse the information of the generic function to filter the
+                 generic arguments and compute the effect of the call *)
+              [%cassert] ctx.span
+                (base.keep_params = inst.keep_params
+                && base.keep_trait_clauses = inst.keep_trait_clauses
+                && base.can_fail = inst.can_fail
+                && base.lift = inst.lift)
+                ("The model " ^ inst.extract_name
+               ^ " of an instantiation of " ^ name_to_string ctx name
+               ^ " must have the same parameters and effect as the model "
+               ^ base.extract_name ^ " of the function");
+              Pure (ModelInstantiation (id, inst.extract_name))
+          | _ -> unsupported (name_to_string ctx name))
+
 let rec translate_expr (e : S.expr) (ctx : bs_ctx) : texpr =
   [%ldebug "e:\n" ^ bs_ctx_expr_to_string ctx e];
   match e with
@@ -423,7 +501,6 @@ and translate_function_call_aux (call : S.call) (e : S.expr) (ctx : bs_ctx) :
     | S.Fun (fid, call_id) ->
         (* Regular function call *)
         let fid_t = translate_fn_ptr_kind ctx fid in
-        let func = Fun (FromLlbc (fid_t, None)) in
         (* Retrieve the effect information about this function (can fail,
          * takes a state as input, etc.) *)
         let effect_info = get_fun_effect_info ctx fid_t None in
@@ -510,6 +587,9 @@ and translate_function_call_aux (call : S.call) (e : S.expr) (ctx : bs_ctx) :
 
           (* *)
           (ctx, dsg.fwd_info.ignore_output, back_funs)
+        in
+        let func =
+          Fun (translate_call_fun_id ctx call fid fid_t (List.length back_funs))
         in
         (* Compute the pattern for the destination *)
         let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
@@ -781,49 +861,6 @@ and translate_function_call_aux (call : S.call) (e : S.expr) (ctx : bs_ctx) :
         in
         (ctx, call_e)
     | _ -> (ctx, call_e)
-  in
-  (* This is a **hack** for [core::result::{core::result::Result<@T, @E>}::unwrap]:
-     introduce a call to a special [Result.unwrap.mut] if we call the function with mutable
-     borrows.
-
-     TODO: remove once we have partial monomorphisation.
-  *)
-  let call_e =
-    match call.call_id with
-    | S.Fun (Fun fid, _)
-      when List.exists
-             (TypesUtils.ty_has_mut_borrows ctx.type_ctx.type_infos)
-             call.generics.types -> (
-        match FunDeclId.Map.find_opt fid ctx.decls_ctx.fun_ctx.fun_decls with
-        | None -> call_e
-        | Some fun_decl ->
-            (* Check if the function is [core::result::{core::result::Result<@T, @E>}::unwrap] *)
-            let unwrap_pat =
-              NameMatcher.parse_pattern
-                "core::result::{core::result::Result<@T, @E>}::unwrap"
-            in
-            if
-              ExtractName.match_name ctx.decls_ctx.crate unwrap_pat
-                fun_decl.item_meta.name
-            then
-              (* Update the call *)
-              let app, args = destruct_apps call_e in
-              match app.e with
-              | Qualif { id = _; generics } ->
-                  [%add_loc] mk_apps ctx.span
-                    {
-                      e =
-                        Qualif
-                          {
-                            id = FunOrOp (Fun (Pure ResultUnwrapMut));
-                            generics;
-                          };
-                      ty = app.ty;
-                    }
-                    args
-              | _ -> [%internal_error] ctx.span
-            else call_e)
-    | _ -> call_e
   in
   [%ldebug "call_e: " ^ texpr_to_string ctx call_e];
   [%ldebug

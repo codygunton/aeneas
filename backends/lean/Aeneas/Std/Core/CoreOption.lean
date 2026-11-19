@@ -21,6 +21,15 @@ theorem core.option.Option.expect.spec {T : Type _} (x : Option T) (msg: Str) (h
   expect x msg ⦃ v => x = some v ⦄ := by
   simp only [expect, Result.ofOption]; grind
 
+/-- `Option::<&mut T>::expect`: see `core.option.Option.unwrap.mut` (the first generic argument is
+    the region of the message). -/
+@[expose, rust_fun "core::option::{core::option::Option<@T>}::expect<'b, &'a mut @T>"]
+def core.option.Option.expect.mut {T : Type _} (x : Option T) (_msg: Str) :
+  Result (T × (T → Option T)) :=
+  match x with
+  | some v => ok (v, fun v => some v)
+  | none => fail .panic
+
 @[expose, rust_fun "core::option::{core::option::Option<@T>}::ok_or"]
 def core.option.Option.ok_or {T E : Type _} (x : Option T) (e : E) :
   Result (core.result.Result T E) :=

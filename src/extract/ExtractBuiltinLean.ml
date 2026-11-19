@@ -134,7 +134,7 @@ let lean_builtin_types = [
   mk_type "core::ops::range::Bound" "core.ops.range.Bound" ~kind:(KEnum [("Included", Some "Included"); ("Excluded", Some "Excluded"); ("Unbounded", Some "Unbounded")]);
   (* file: "Aeneas/Std/Range.lean", line: 16 *)
   mk_type "core::ops::range::Range" "core.ops.range.Range" ~kind:(KStruct [("start", Some "start"); ("end", Some "end")]);
-  (* file: "Aeneas/Std/Core/Core.lean", line: 105 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 113 *)
   mk_type "core::ops::range::RangeFrom" "core.ops.range.RangeFrom" ~kind:(KStruct [("start", Some "start")]);
   (* file: "Aeneas/Std/Range.lean", line: 31 *)
   mk_type "core::ops::range::RangeFull" "core.ops.range.RangeFull";
@@ -148,7 +148,7 @@ let lean_builtin_types = [
   mk_type "core::option::Option" "Option" ~prefix_variant_names:false ~kind:(KEnum [("None", Some "none"); ("Some", Some "some")]);
   (* file: "Aeneas/Std/Core/Panic.lean", line: 9 *)
   mk_type "core::panic::panic_info::PanicInfo" "core.panic.panic_info.PanicInfo";
-  (* file: "Aeneas/Std/Core/Core.lean", line: 109 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 117 *)
   mk_type "core::panicking::AssertKind" "core.panicking.AssertKind" ~kind:(KEnum [("Eq", Some "Eq"); ("Ne", Some "Ne"); ("Match", Some "Match")]);
   (* file: "Aeneas/Std/Core/Pin.lean", line: 8 *)
   mk_type "core::pin::Pin" "core.pin.Pin";
@@ -556,9 +556,9 @@ let lean_builtin_funs = [
   mk_fun "core::array::{core::ops::index::Index<[@T; @N], @I, @O>}::index" "core.array.Array.index";
   (* file: "Aeneas/Std/Array/ArraySlice.lean", line: 103 *)
   mk_fun "core::array::{core::ops::index::IndexMut<[@T; @N], @I, @O>}::index_mut" "core.array.Array.index_mut";
-  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 122 *)
+  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 131 *)
   mk_fun "core::bool::{bool}::then" "core.bool.Bool.then";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 229 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 242 *)
   mk_fun "core::bool::{bool}::then_some" "core.bool.Bool.then_some";
   (* file: "Aeneas/Std/Core/MiscExtra.lean", line: 207 *)
   mk_fun "core::borrow::{core::borrow::Borrow<&'0 @T, @T>}::borrow" "Shared0T.Insts.CoreBorrowBorrow.borrow";
@@ -570,7 +570,7 @@ let lean_builtin_funs = [
   mk_fun "core::char::methods::{char}::is_digit" "core.char.methods.Char.is_digit";
   (* file: "Aeneas/Std/CoreStr.lean", line: 749 *)
   mk_fun "core::char::methods::{char}::to_digit" "core.char.methods.Char.to_digit";
-  (* file: "Aeneas/Std/Core/Core.lean", line: 115 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 123 *)
   mk_fun "core::clone::impls::{core::clone::Clone<&'0 @T>}::clone" "core.clone.impls.CloneShared.clone";
   (* file: "Aeneas/Std/Core/Cmp.lean", line: 23 *)
   mk_fun "core::cmp::Eq::assert_fields_are_eq" "core.cmp.Eq.assert_fields_are_eq.default";
@@ -1968,7 +1968,7 @@ let lean_builtin_funs = [
   mk_fun "core::option::{core::cmp::PartialEq<core::option::Option<@T>, core::option::Option<@T>>}::eq" "core.option.Option.Insts.CoreCmpPartialEqOption.eq";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 136 *)
   mk_fun "core::option::{core::default::Default<core::option::Option<@T>>}::default" "core.option.Option.Insts.CoreDefaultDefault.default";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 165 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 178 *)
   mk_fun "core::option::{core::fmt::Debug<core::option::Option<@T>>}::fmt" "core.option.Option.Insts.CoreFmtDebug.fmt";
   (* file: "Aeneas/Std/Core/IterSources.lean", line: 44 *)
   mk_fun "core::option::{core::iter::traits::collect::IntoIterator<core::option::Option<@T>, @T, core::option::IntoIter<@T>>}::into_iter" "core.option.Option.Insts.CoreIterTraitsCollectIntoIteratorTIntoIter.into_iter";
@@ -1978,10 +1978,12 @@ let lean_builtin_funs = [
   mk_fun "core::option::{core::iter::traits::iterator::Iterator<core::option::IntoIter<@A>, @A>}::next" "core.option.IntoIter.Insts.CoreIterTraitsIteratorIterator.next";
   (* file: "Aeneas/Std/Core/IterSources.lean", line: 62 *)
   mk_fun "core::option::{core::iter::traits::iterator::Iterator<core::option::IntoIter<@A>, @A>}::size_hint" "core.option.IntoIter.Insts.CoreIterTraitsIteratorIterator.size_hint";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 156 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 169 *)
   mk_fun "core::option::{core::ops::try_trait::FromResidual<core::option::Option<@T>, core::option::Option<!>>}::from_residual" "core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionNever.from_residual";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 149 *)
   mk_fun "core::option::{core::ops::try_trait::Try<core::option::Option<@T>>}::branch" "core.option.Option.Insts.CoreOpsTry_traitTry.branch";
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 159 *)
+  mk_fun "core::option::{core::ops::try_trait::Try<core::option::Option<@T>>}::branch<&'a mut @T>" "core.option.Option.Insts.CoreOpsTry_traitTry.branch.mut";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 118 *)
   mk_fun "core::option::{core::option::Option<&'0 @T>}::cloned" "core.option.OptionShared0T.cloned";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 112 *)
@@ -1994,23 +1996,25 @@ let lean_builtin_funs = [
   mk_fun "core::option::{core::option::Option<@T>}::as_ref" "core.option.Option.as_ref";
   (* file: "Aeneas/Std/Core/CoreOption.lean", line: 14 *)
   mk_fun "core::option::{core::option::Option<@T>}::expect" "core.option.Option.expect";
+  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 26 *)
+  mk_fun "core::option::{core::option::Option<@T>}::expect<'b, &'a mut @T>" "core.option.Option.expect.mut";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 69 *)
   mk_fun "core::option::{core::option::Option<@T>}::filter" "core.option.Option.filter";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 100 *)
   mk_fun "core::option::{core::option::Option<@T>}::get_or_insert" "core.option.Option.get_or_insert";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 94 *)
   mk_fun "core::option::{core::option::Option<@T>}::insert" "core.option.Option.insert";
-  (* file: "Aeneas/Std/Core/Core.lean", line: 98 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 106 *)
   mk_fun "core::option::{core::option::Option<@T>}::is_none" "core.option.Option.is_none" ~can_fail:false ~lift:false;
-  (* file: "Aeneas/Std/Core/Core.lean", line: 102 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 110 *)
   mk_fun "core::option::{core::option::Option<@T>}::is_some" "core.option.Option.is_some" ~can_fail:false ~lift:false;
-  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 84 *)
+  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 93 *)
   mk_fun "core::option::{core::option::Option<@T>}::is_some_and" "core.option.Option.is_some_and";
-  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 41 *)
+  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 50 *)
   mk_fun "core::option::{core::option::Option<@T>}::map" "core.option.Option.map";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 43 *)
   mk_fun "core::option::{core::option::Option<@T>}::map_or" "core.option.Option.map_or";
-  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 24 *)
+  (* file: "Aeneas/Std/Core/CoreOption.lean", line: 33 *)
   mk_fun "core::option::{core::option::Option<@T>}::ok_or" "core.option.Option.ok_or";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 50 *)
   mk_fun "core::option::{core::option::Option<@T>}::ok_or_else" "core.option.Option.ok_or_else";
@@ -2020,11 +2024,13 @@ let lean_builtin_funs = [
   mk_fun "core::option::{core::option::Option<@T>}::or_else" "core.option.Option.or_else";
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 107 *)
   mk_fun "core::option::{core::option::Option<@T>}::replace" "core.option.Option.replace";
-  (* file: "Aeneas/Std/Core/Core.lean", line: 95 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 103 *)
   mk_fun "core::option::{core::option::Option<@T>}::take" "core.option.Option.take" ~can_fail:false ~lift:false;
   (* file: "Aeneas/Std/Core/Core.lean", line: 74 *)
   mk_fun "core::option::{core::option::Option<@T>}::unwrap" "core.option.Option.unwrap";
-  (* file: "Aeneas/Std/Core/Core.lean", line: 83 *)
+  (* file: "Aeneas/Std/Core/Core.lean", line: 85 *)
+  mk_fun "core::option::{core::option::Option<@T>}::unwrap<&'a mut @T>" "core.option.Option.unwrap.mut";
+  (* file: "Aeneas/Std/Core/Core.lean", line: 91 *)
   mk_fun "core::option::{core::option::Option<@T>}::unwrap_or" "core.option.Option.unwrap_or" ~can_fail:false;
   (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 36 *)
   mk_fun "core::option::{core::option::Option<@T>}::unwrap_or_default" "core.option.Option.unwrap_or_default";
@@ -2052,11 +2058,11 @@ let lean_builtin_funs = [
   mk_fun "core::result::{core::ops::try_trait::FromResidual<core::result::Result<@T, @F>, core::result::Result<!, @E>>}::from_residual" "core.result.Result.Insts.CoreOpsTry_traitFromResidualResult.from_residual";
   (* file: "Aeneas/Std/Core/Convert.lean", line: 96 *)
   mk_fun "core::result::{core::ops::try_trait::Try<core::result::Result<@T, @E>>}::branch" "core.result.Result.Insts.CoreOpsTry.branch";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 203 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 216 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::and_then" "core.result.Result.and_then";
-  (* file: "Aeneas/Std/Core/Fmt.lean", line: 642 *)
+  (* file: "Aeneas/Std/Core/Fmt.lean", line: 644 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::expect" "core.result.Result.expect";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 183 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 196 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::is_err" "core.result.Result.is_err";
   (* file: "Aeneas/Std/Core/Convert.lean", line: 76 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::is_ok" "core.result.Result.is_ok";
@@ -2064,17 +2070,19 @@ let lean_builtin_funs = [
   mk_fun "core::result::{core::result::Result<@T, @E>}::map" "core.result.Result.map";
   (* file: "Aeneas/Std/Core/CoreResult.lean", line: 72 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::map_err" "core.result.Result.map_err";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 189 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 202 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::ok" "core.result.Result.ok";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 211 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 224 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::or_else" "core.result.Result.or_else";
   (* file: "Aeneas/Std/Core/Fmt.lean", line: 617 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::unwrap" "core.result.Result.unwrap";
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 196 *)
+  (* file: "Aeneas/Std/Core/Fmt.lean", line: 637 *)
+  mk_fun "core::result::{core::result::Result<@T, @E>}::unwrap<&'a mut @T, @E>" "core.result.Result.unwrap.mut";
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 209 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::unwrap_err" "core.result.Result.unwrap_err";
   (* file: "Aeneas/Std/Core/CoreResult.lean", line: 99 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::unwrap_or" "core.result.Result.unwrap_or" ~can_fail:false;
-  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 219 *)
+  (* file: "Aeneas/Std/Core/OptionExtra.lean", line: 232 *)
   mk_fun "core::result::{core::result::Result<@T, @E>}::unwrap_or_else" "core.result.Result.unwrap_or_else";
   (* file: "Aeneas/Std/Array/ArraySlice.lean", line: 156 *)
   mk_fun "core::slice::cmp::{core::cmp::PartialEq<[@T], [@U]>}::eq" "core.slice.cmp.PartialEqSlice.eq";

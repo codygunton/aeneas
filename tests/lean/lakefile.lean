@@ -50,6 +50,8 @@ package «tests» {}
 @[default_target] lean_lib ClifvMonoRefs
 @[default_target] lean_lib ClifvMonoStd
 @[default_target] lean_lib ClifvMoveAfterBorrowedResult
+@[default_target] lean_lib ClifvMutInstantiationNoModel
+@[default_target] lean_lib ClifvMutInstantiations
 @[default_target] lean_lib ClifvNestedBorrowCtx
 @[default_target] lean_lib ClifvNestedFallbacks
 @[default_target] lean_lib ClifvNestedLoopReturn

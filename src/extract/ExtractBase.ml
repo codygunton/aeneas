@@ -840,7 +840,12 @@ let ctx_get_global (span : Meta.span) (id : A.GlobalDeclId.id)
 
 let ctx_get_function (span : Meta.span) (id : fun_id) (ctx : extraction_ctx) :
     string =
-  ctx_get (Some span) (FunId id) ctx
+  match id with
+  | Pure (ModelInstantiation (_, name)) ->
+      (* The models of instantiations are not registered in the names map:
+         their names come from the builtin information *)
+      escape_name name
+  | _ -> ctx_get (Some span) (FunId id) ctx
 
 let ctx_get_local_function (span : Meta.span) (id : A.FunDeclId.id)
     (lp : (LoopId.id * bool) option) (ctx : extraction_ctx) : string =
@@ -1299,7 +1304,6 @@ let builtin_pure_functions () : (pure_builtin_fun_id * string) list =
         (IndexMutAtIndex Slice, "Slice.index_mut_usize");
         (IndexMutAtIndex Array, "Array.index_mut_usize");
         (ToResult, "lift");
-        (ResultUnwrapMut, "core.result.Result.unwrap.mut");
         (GetTarget, "get_target");
         (TargetFeatureEnabled, "target_feature_enabled");
       ]
