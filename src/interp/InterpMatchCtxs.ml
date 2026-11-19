@@ -470,14 +470,6 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
       ^ tavalue_to_string ~span:(Some M.span) ctx1 v1
       ^ "\n- ty1: " ^ ty_to_string ctx1 v1.ty];
 
-    (* Using ValuesUtils.value_has_borrows on purpose here: we want
-       to make explicit the fact that, though we have to pick
-       one of the two contexts (ctx0 here) to call value_has_borrows,
-       it doesn't matter here. *)
-    let value_has_borrows =
-      ValuesUtils.value_has_borrows (Some span) ctx0.type_ctx.type_infos
-    in
-
     let match_rec = match_tvalues ctx0 ctx1 in
     let match_arec = match_tavalues ctx0 ctx1 in
     let ty = M.match_rtys ctx0 ctx1 v0.ty v1.ty in
@@ -549,8 +541,13 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             [%ldebug "shared loans"];
             let sv = match_rec sv0 sv1 in
             let av = match_arec av0 av1 in
+            (* The shared value can't contain borrows, but it may contain
+               symbolic values whose type contains shared borrows (for
+               instance the static borrows hidden in [Cow<'static, str>]) *)
             [%sanity_check_recover] M.recover M.span
-              (not (value_has_borrows sv.value));
+              (not
+                 (ValuesUtils.value_has_loans_or_borrows (Some span)
+                    ctx0.type_ctx.type_infos sv.value));
             M.match_ashared_loans match_rec ctx0 ctx1 v0.ty pm0 id0 sv0 av0
               v1.ty pm1 id1 sv1 av1 ty sv av
         | AMutLoan (pm0, id0, av0), AMutLoan (pm1, id1, av1) ->
@@ -685,9 +682,14 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
       (* Create the abstraction expression *)
       let cont : abs_cont option =
         if S.with_abs_conts then
+          (* Note that we check whether the region of the abstraction is used
+             in a mutable borrow, not whether the type contains mutable borrows:
+             with nested borrows the type may contain mutable borrows of other
+             regions (e.g., [&'a mut S<'b>] where ['b] only appears below shared
+             borrows), in which case the abstraction gives back nothing. *)
           if
-            TypesUtils.ty_has_mut_borrows ctx0.type_ctx.type_infos
-              ty_with_regions
+            TypesUtils.ty_has_mut_borrow_for_region_in_set
+              ctx0.type_ctx.type_infos regions ty_with_regions
           then
             (* We used to generate a continuation of the following shape:
                {[

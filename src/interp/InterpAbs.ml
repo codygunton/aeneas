@@ -261,22 +261,30 @@ let convert_value_to_output_avalues (span : Meta.span) (ctx : eval_ctx)
     | _ -> false
   in
 
-  (* We only call this on values inside mutable borrows *)
+  (* We only call this on values inside mutable borrows.
+
+     The value may contain shared borrows (nested borrows, for instance the
+     [&'b T] inside the value borrowed by [&'a mut S<'b>]): we ignore them (we
+     don't project them), see {!InterpBorrows.destructure_abs} for why this
+     preserves the semantics. We reject the nested mutable borrows. *)
   let rec check_inputs (v : tvalue) (proj_ty : ty) : unit =
     match (v.value, proj_ty) with
     | VLiteral _, _ -> ()
     | VAdt { variant_id; fields }, TAdt tref ->
-        [%cassert] span (ty_no_regions v.ty)
+        [%cassert] span
+          (not (ty_has_mut_borrows ctx.type_ctx.type_infos v.ty))
           "Nested borrows are not supported yet";
         let field_types =
           ctx_adt_get_instantiated_field_types span ctx tref variant_id
         in
         List.iter2 check_inputs fields field_types
     | VBottom, _ -> [%internal_error] span
+    | VBorrow (VSharedBorrow _), TRef (_, _, RShared) -> ()
     | VBorrow _, _ -> [%craise] span "Nested borrows are not supported yet"
     | VLoan _, _ -> [%internal_error] span
     | VSymbolic _, _ ->
-        if ty_no_regions v.ty then () else [%craise] span "Not implemented yet"
+        if not (ty_has_mut_borrows ctx.type_ctx.type_infos v.ty) then ()
+        else [%craise] span "Not implemented yet"
     | _ -> [%internal_error] span
   in
 
@@ -298,7 +306,9 @@ let convert_value_to_output_avalues (span : Meta.span) (ctx : eval_ctx)
             ty = proj_ty;
           } )
     | VBorrow bc, TRef (rid, ref_ty, kind) ->
-        [%cassert] span (ty_no_regions ref_ty)
+        (* We support the nested shared borrows (see [check_inputs]) *)
+        [%cassert] span
+          (not (ty_has_mut_borrows ctx.type_ctx.type_infos ref_ty))
           "Nested borrows are not supported yet";
         if keep_region rid then
           match bc with
@@ -311,9 +321,9 @@ let convert_value_to_output_avalues (span : Meta.span) (ctx : eval_ctx)
               let ev = mk_etuple ~borrow_proj:true [] in
               ([ value ], ev)
           | VMutBorrow (bid, bv) ->
-              (* We don't support nested borrows for now *)
+              (* We don't support nested mutable borrows for now *)
               [%cassert] span
-                (not (value_has_borrows (Some span) ctx bv.value))
+                (not (value_has_mut_borrows (Some span) ctx bv.value))
                 "Nested borrows are not supported yet";
               (* Create an avalue to push - note that we use [AIgnore] for the inner avalue *)
               let av : tavalue =
@@ -339,11 +349,13 @@ let convert_value_to_output_avalues (span : Meta.span) (ctx : eval_ctx)
            We probably need to look at the borrows *inside*. *)
         [%craise] span "Not implemented yet"
     | VSymbolic sv, _ ->
-        (* Check that there are no nested borrows in the symbolic value -
-           we don't support this case yet *)
+        (* Check that there are no nested mutable borrows in the symbolic value -
+           we don't support this case yet (the projectors over symbolic values
+           support nested shared borrows) *)
         [%cassert] span
           (not
-             (ty_has_nested_borrows (Some span) ctx.type_ctx.type_infos sv.sv_ty))
+             (ty_has_mut_borrows_under_borrows ctx.type_ctx.type_infos
+                sv.sv_ty))
           "Nested borrows are not supported yet";
 
         (* Check if there is an intersection with the current regions *)
@@ -414,11 +426,12 @@ let convert_value_to_input_avalues (span : Meta.span) (ctx : eval_ctx)
             (* *)
             ([ av ], input))
     | VSymbolic sv ->
-        (* Check that there are no nested borrows in the symbolic value -
+        (* Check that there are no nested mutable borrows in the symbolic value -
            we don't support this case yet *)
         [%cassert] span
           (not
-             (ty_has_nested_borrows (Some span) ctx.type_ctx.type_infos sv.sv_ty))
+             (ty_has_mut_borrows_under_borrows ctx.type_ctx.type_infos
+                sv.sv_ty))
           "Nested borrows are not supported yet";
         [%cassert] span (not (tvalue_has_bottom ctx v)) "Unexpected";
 
