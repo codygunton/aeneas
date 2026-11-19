@@ -14,11 +14,6 @@ Module Arrays.
     Visibility: public *)
 Axiom core_panicking_panic : str -> result Never.
 
-(** [core::panicking::panic_in_cleanup]:
-    Source: '/rustc/library/core/src/panicking.rs', lines 364:0-364:26
-    Name pattern: [core::panicking::panic_in_cleanup] *)
-Axiom core_panicking_panic_in_cleanup : result Never.
-
 (** [arrays::AB]
     Source: 'tests/src/arrays.rs', lines 8:0-11:1
     Visibility: public *)

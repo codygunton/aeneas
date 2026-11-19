@@ -26,11 +26,6 @@ Axiom core_panicking_panic_fmt : core_fmt_Arguments_t -> result Never.
     Visibility: public *)
 Axiom core_panicking_panic : str -> result Never.
 
-(** [core::panicking::panic_in_cleanup]:
-    Source: '/rustc/library/core/src/panicking.rs', lines 364:0-364:26
-    Name pattern: [core::panicking::panic_in_cleanup] *)
-Axiom core_panicking_panic_in_cleanup : result Never.
-
 (** [no_nested_borrows::Pair]
     Source: 'tests/src/no_nested_borrows.rs', lines 7:0-10:1
     Visibility: public *)

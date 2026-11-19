@@ -493,6 +493,7 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
           Errors.record_item_failure ~kind:"trait_decl" ~rust_name:name
             ~def_id:(TraitDeclId.to_int trait_decl.def_id)
             error;
+          SymbolicToPure.drop_trait_method trait_decl.def_id method_id;
           None
       in
       let translate_trait_methods (trait_decl : LlbcAst.trait_decl) =

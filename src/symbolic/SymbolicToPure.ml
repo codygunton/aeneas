@@ -172,6 +172,26 @@ let translate_binder (span : span option) (translate_inside : 'a -> 'b)
     binder_llbc_generics;
   }
 
+(** The trait methods whose signature could not be translated: they are
+    dropped from their trait declaration and from the trait implementations
+    (the functions which call them through a trait instance fail to extract and
+    are reported). *)
+let dropped_trait_methods : (TraitDeclId.id * TraitMethodId.id, unit) Hashtbl.t
+    =
+  Hashtbl.create 16
+
+let dropped_trait_methods_mutex = Mutex.create ()
+
+let drop_trait_method (trait_id : TraitDeclId.id) (method_id : TraitMethodId.id)
+    : unit =
+  Mutex.protect dropped_trait_methods_mutex (fun () ->
+      Hashtbl.replace dropped_trait_methods (trait_id, method_id) ())
+
+let is_dropped_trait_method (trait_id : TraitDeclId.id)
+    (method_id : TraitMethodId.id) : bool =
+  Mutex.protect dropped_trait_methods_mutex (fun () ->
+      Hashtbl.mem dropped_trait_methods (trait_id, method_id))
+
 let translate_trait_method (ctx : Contexts.decls_ctx) (span : span option)
     (translate_ty : T.ty -> ty) (trait_decl : A.trait_decl)
     (method_id : TraitMethodId.id) (bound_method : A.trait_method T.binder) :
@@ -259,9 +279,25 @@ let translate_trait_decl (ctx : Contexts.decls_ctx) (trait_decl : A.trait_decl)
     TraitDeclId.Map.find def_id ctx.trait_methods_to_extract
   in
   let methods =
-    List.map
+    List.filter_map
       (fun ((method_id, m) : TraitMethodId.id * A.trait_method T.binder) ->
-        translate_trait_method ctx opt_span translate_ty trait_decl method_id m)
+        if is_dropped_trait_method def_id method_id then None
+        else
+          try
+            Some
+              (translate_trait_method ctx opt_span translate_ty trait_decl
+                 method_id m)
+          with exn when Errors.is_item_failure exn ->
+            let error = Errors.to_item_failure exn in
+            [%warn_opt_span] error.span
+              ("Dropping the method '" ^ m.binder_value.name ^ "' of the trait '"
+             ^ name ^ "': its signature could not be translated");
+            Errors.record_item_failure ~kind:"trait_decl"
+              ~rust_name:(name ^ "::" ^ m.binder_value.name)
+              ~def_id:(TraitDeclId.to_int def_id)
+              { error with msg = "dropped method: " ^ error.msg };
+            drop_trait_method def_id method_id;
+            None)
       (TraitMethodId.Map.to_list methods_to_extract)
   in
   {
@@ -332,15 +368,19 @@ let translate_trait_impl (ctx : Contexts.decls_ctx) (trait_impl : A.trait_impl)
   (* We checked that there were no types in the trait declaration already. *)
   let types = [] in
   let methods =
-    List.map
+    List.filter_map
       (fun ((method_id, m) : TraitMethodId.id * T.fun_decl_ref T.binder) ->
-        let name =
-          Charon.GAstUtils.get_method_name ctx.crate trait_impl.impl_trait.id
-            method_id
-        in
-        ( method_id,
-          name,
-          translate_binder span (translate_fun_decl_ref span translate_ty) m ))
+        if is_dropped_trait_method trait_impl.impl_trait.id method_id then None
+        else
+          let name =
+            Charon.GAstUtils.get_method_name ctx.crate trait_impl.impl_trait.id
+              method_id
+          in
+          Some
+            ( method_id,
+              name,
+              translate_binder span (translate_fun_decl_ref span translate_ty) m
+            ))
       (TraitMethodId.Map.to_list methods)
   in
   (* Lookup the builtin information, if there is *)

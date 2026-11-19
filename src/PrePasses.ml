@@ -86,6 +86,40 @@ let erase_body_regions (crate : crate) (f : fun_decl) : fun_decl =
     ^ Print.fun_decl_to_string env "" "  " f];
   f
 
+(** Empty the unwinding blocks (the [on_unwind] blocks of calls, drops,
+    assertions, panics and inline assembly): Aeneas doesn't model unwinding, so
+    they are never evaluated. When the control-flow is reconstructed without
+    code duplication they can contain [break]s to the join points of the
+    unwinding paths, which the loop pre-passes would otherwise have to handle. *)
+let erase_unwind_blocks (_ : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let empty (b : block) : block = { b with statements = [] } in
+      let visitor =
+        object
+          inherit [_] map_statement as super
+
+          method! visit_statement env st =
+            let st = super#visit_statement env st in
+            match st.kind with
+            | Drop (p, fn_ptr, kind, unwind) ->
+                { st with kind = Drop (p, fn_ptr, kind, empty unwind) }
+            | DropEmptyBox (p, unwind) ->
+                { st with kind = DropEmptyBox (p, empty unwind) }
+            | Assert (a, k, unwind) -> { st with kind = Assert (a, k, empty unwind) }
+            | Call (call, p, unwind) -> { st with kind = Call (call, p, empty unwind) }
+            | Panic (call, unwind) -> { st with kind = Panic (call, empty unwind) }
+            | InlineAsm (asm, fallthrough, labels, unwind) ->
+                { st with kind = InlineAsm (asm, fallthrough, labels, empty unwind) }
+            | _ -> st
+        end
+      in
+      {
+        f with
+        body = StructuredBody { body with body = visitor#visit_block () body.body };
+      }
+  | _ -> f
+
 (** Replace the occurrences of [core::intrinsics::unreachable] with
     [UndefinedBehavior]. This helps with the analyzes and the symbolic
     evaluation (in particular, we stop the evaluation when encountering an
@@ -3192,6 +3226,7 @@ let apply_passes (crate : crate) : crate =
       ("fix_anon_const_initializers", fix_anon_const_initializers);
       ("erase_body_regions", erase_body_regions);
       ("remove_unreachable", remove_unreachable);
+      ("erase_unwind_blocks", erase_unwind_blocks);
       ("ret_to_carrier", ret_to_carrier);
       ("lower_loop_exits", lower_loop_exits);
       ("join_block_escapes", join_block_escapes);

@@ -20,6 +20,11 @@ set_option maxRecDepth 2048
 
 namespace clifv_trait_method_sig_failure
 
+/-- Trait declaration: [clifv_trait_method_sig_failure::Bad]
+    Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 10:0-12:1
+    Visibility: public -/
+structure Bad (Self : Type _) where
+
 /-- [clifv_trait_method_sig_failure::unrelated]:
     Source: 'tests/src/clifv_trait_method_sig_failure.rs', lines 14:0-16:1
     Visibility: public -/

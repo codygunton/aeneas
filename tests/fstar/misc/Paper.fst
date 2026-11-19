@@ -11,11 +11,6 @@ open Primitives
     Visibility: public *)
 assume val core_panicking_panic : str -> result never
 
-(** [core::panicking::panic_in_cleanup]:
-    Source: '/rustc/library/core/src/panicking.rs', lines 364:0-364:26
-    Name pattern: [core::panicking::panic_in_cleanup] *)
-assume val core_panicking_panic_in_cleanup : result never
-
 (** [paper::ref_incr]:
     Source: 'tests/src/paper.rs', lines 7:0-9:1
     Visibility: public *)
