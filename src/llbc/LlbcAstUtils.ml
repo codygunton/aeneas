@@ -115,6 +115,35 @@ let map_name_before_instantiated (f : name -> name) (n : name) : name =
   | (PeInstantiated _ as e) :: rest -> f (List.rev rest) @ [ e ]
   | _ -> f n
 
+(** Erase the regions of the instantiation ([PeInstantiated] suffix) of a
+    name, when the instance only binds regions.
+
+    Monomorphized instances bind one region parameter per region of their
+    instantiation (e.g. [Holder::<&'a u32><'a>]). Names are computed without
+    generic arguments, in which case the name matcher drops the instantiation
+    of such items altogether: [Holder::<&'a u32>] and [Holder::<&'a mut u32>]
+    would get the same name. Regions don't appear in extracted names, so we
+    turn the instantiation into a closed one with erased regions. *)
+let name_erase_instantiated_regions (n : name) : name =
+  match List.rev n with
+  | PeInstantiated b :: rest
+    when b.binder_params.regions <> []
+         && b.binder_params.types = []
+         && b.binder_params.const_generics = []
+         && b.binder_params.trait_clauses = [] ->
+      let visitor =
+        object
+          inherit [_] map_ty
+          method! visit_region _ _ = RErased
+        end
+      in
+      let binder_value = visitor#visit_generic_args () b.binder_value in
+      List.rev
+        (PeInstantiated
+           { binder_params = TypesUtils.empty_generic_params; binder_value }
+        :: rest)
+  | _ -> n
+
 (** Extract and strip any trailing [PeTarget] element from a name, returning the
     cleaned name and an optional target suffix string (with [-] replaced by
     [_]). *)

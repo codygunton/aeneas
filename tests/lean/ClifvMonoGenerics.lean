@@ -315,8 +315,68 @@ def stack_top_bool (a : Bool) : Result Bool := do
   | none => ok false
   | some x => ok x
 
+/-- [clifv_mono_generics::add_one::{closure}]
+    Source: 'tests/src/clifv_mono_generics.rs', lines 132:22-132:36 -/
+@[reducible]
+def add_one.closure := Unit
+
+/-- [clifv_mono_generics::Wrap::<clifv_mono_generics::add_one::{closure}>]
+    Source: 'tests/src/clifv_mono_generics.rs', lines 121:0-123:1
+    Visibility: public -/
+structure Wrapadd_oneclosure where
+  f : add_one.closure
+
+/-- [clifv_mono_generics::times_two::{closure}]
+    Source: 'tests/src/clifv_mono_generics.rs', lines 137:22-137:36 -/
+@[reducible]
+def times_two.closure := Unit
+
+/-- [clifv_mono_generics::Wrap::<clifv_mono_generics::times_two::{closure}>]
+    Source: 'tests/src/clifv_mono_generics.rs', lines 121:0-123:1
+    Visibility: public -/
+structure Wraptimes_twoclosure where
+  f : times_two.closure
+
+/-- [clifv_mono_generics::add_one::{impl core::ops::function::Fn<(u32,), u32> for clifv_mono_generics::add_one::{closure}}::call]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 132:22-132:36 -/
+def add_one.closure.Insts.CoreOpsFunctionFnTupleU32U32.call
+  (c : add_one.closure) (tupled_args : Std.U32) : Result Std.U32 := do
+  tupled_args + 1#u32
+
+/-- [clifv_mono_generics::{clifv_mono_generics::Wrap::<clifv_mono_generics::add_one::{closure}>}::call::<clifv_mono_generics::add_one::{closure}>]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 126:4-128:5
+    Visibility: public -/
+def Wrapadd_oneclosure.calladd_oneclosure
+  (self : Wrapadd_oneclosure) (x : Std.U32) : Result Std.U32 := do
+  add_one.closure.Insts.CoreOpsFunctionFnTupleU32U32.call self.f x
+
+/-- [clifv_mono_generics::times_two::{impl core::ops::function::Fn<(u32,), u32> for clifv_mono_generics::times_two::{closure}}::call]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 137:22-137:36 -/
+def times_two.closure.Insts.CoreOpsFunctionFnTupleU32U32.call
+  (c : times_two.closure) (tupled_args : Std.U32) : Result Std.U32 := do
+  tupled_args * 2#u32
+
+/-- [clifv_mono_generics::{clifv_mono_generics::Wrap::<clifv_mono_generics::times_two::{closure}>}::call::<clifv_mono_generics::times_two::{closure}>]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 126:4-128:5
+    Visibility: public -/
+def Wraptimes_twoclosure.calltimes_twoclosure
+  (self : Wraptimes_twoclosure) (x : Std.U32) : Result Std.U32 := do
+  times_two.closure.Insts.CoreOpsFunctionFnTupleU32U32.call self.f x
+
+/-- [clifv_mono_generics::add_one]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 131:0-134:1
+    Visibility: public -/
+def add_one (x : Std.U32) : Result Std.U32 := do
+  Wrapadd_oneclosure.calladd_oneclosure { f := () } x
+
+/-- [clifv_mono_generics::times_two]:
+    Source: 'tests/src/clifv_mono_generics.rs', lines 136:0-139:1
+    Visibility: public -/
+def times_two (x : Std.U32) : Result Std.U32 := do
+  Wraptimes_twoclosure.calltimes_twoclosure { f := () } x
+
 /-- [clifv_mono_generics::test_traits]:
-    Source: 'tests/src/clifv_mono_generics.rs', lines 118:0-126:1
+    Source: 'tests/src/clifv_mono_generics.rs', lines 142:0-150:1
     Visibility: public -/
 def test_traits : Result Unit := do
   let s ←
@@ -340,7 +400,7 @@ def test_traits : Result Unit := do
 #guard (test_traits).reducesTo ()
 
 /-- [clifv_mono_generics::test_generics]:
-    Source: 'tests/src/clifv_mono_generics.rs', lines 129:0-137:1
+    Source: 'tests/src/clifv_mono_generics.rs', lines 153:0-163:1
     Visibility: public -/
 def test_generics : Result Unit := do
   let i ← use_id 7#u32 true
@@ -355,6 +415,10 @@ def test_generics : Result Unit := do
   massert (i4 = 5#u64)
   let b ← stack_top_bool true
   massert b
+  let i5 ← add_one 5#u32
+  massert (i5 = 6#u32)
+  let i6 ← times_two 5#u32
+  massert (i6 = 10#u32)
 
 /- Unit test for [clifv_mono_generics::test_generics] -/
 #guard (test_generics).reducesTo ()

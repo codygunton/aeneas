@@ -31,7 +31,7 @@ let fun_sig_to_string (ctx : trans_ctx) =
 
 let name_to_simple_name (ctx : trans_ctx) (n : Types.name) : string list =
   let mctx = Charon.NameMatcher.ctx_from_crate ctx.crate in
-  name_to_simple_name mctx n
+  name_to_simple_name mctx (LlbcAstUtils.name_erase_instantiated_regions n)
 
 let name_with_generics_to_simple_name (ctx : trans_ctx)
     ?(prefix : Types.name option = None) (name : Types.name)
