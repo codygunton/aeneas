@@ -222,102 +222,111 @@ def ASIMDMovModImm.maybe_from_u64_loop1
 def ASIMDMovModImm.maybe_from_u64
   (value : Std.U64) (size : ScalarSize) : Result (Option ASIMDMovModImm) := do
   let (return_carrier, join_flag, fallback_flag) ←
-    match size with
-    | ScalarSize.Size8 => ok (none, 0#u32, 0#u32)
-    | ScalarSize.Size16 =>
-      do
-      let value1 ← lift (UScalar.cast .U16 value)
-      let i ← value1 >>> 8#i32
-      let o ←
-        if i = 0#u16
-        then
-          do
-          let i1 ← lift (UScalar.cast .U8 value1)
-          ok (some
-            ({ imm := i1, shift := 0#u8, is_64bit := false, shift_ones := false
-             } : ASIMDMovModImm))
-        else
-          do
-          let i1 ← lift (UScalar.cast .U8 value1)
-          if i1 = 0#u8
+    (match size with
+     | ScalarSize.Size8 => ok (none, 0#u32, 0#u32)
+     | ScalarSize.Size16 =>
+       do
+       let value1 ← lift (UScalar.cast .U16 value)
+       let i ← value1 >>> 8#i32
+       let o ←
+         (if i = 0#u16
           then
-            let i2 ← lift (UScalar.cast .U8 i)
+            do
+            let i1 ← lift (UScalar.cast .U8 value1)
             ok (some
               ({
-                 imm := i2,
-                 shift := 8#u8,
+                 imm := i1,
+                 shift := 0#u8,
                  is_64bit := false,
                  shift_ones := false
                } : ASIMDMovModImm))
-          else ok none
-      ok (some o, 2#u32, 0#u32)
-    | ScalarSize.Size32 =>
-      do
-      let value1 ← lift (UScalar.cast .U32 value)
-      let i ← lift (value1 &&& 4278255615#u32)
-      let (return_carrier1, join_flag1) ←
-        if i = 65535#u32
-        then
-          do
-          let i1 ← value1 >>> 16#i32
-          let imm ← lift (UScalar.cast .U8 i1)
-          ok (some (some
-            ({ imm, shift := 16#u8, is_64bit := false, shift_ones := true } :
-            ASIMDMovModImm)), 0#u32)
-        else
-          do
-          let i1 ← lift (value1 &&& 4294902015#u32)
-          if i1 = 255#u32
+          else
+            do
+            let i1 ← lift (UScalar.cast .U8 value1)
+            if i1 = 0#u8
+            then
+              let i2 ← lift (UScalar.cast .U8 i)
+              ok (some
+                ({
+                   imm := i2,
+                   shift := 8#u8,
+                   is_64bit := false,
+                   shift_ones := false
+                 } : ASIMDMovModImm))
+            else ok none : Result (Option ASIMDMovModImm))
+       ok (some o, 2#u32, 0#u32)
+     | ScalarSize.Size32 =>
+       do
+       let value1 ← lift (UScalar.cast .U32 value)
+       let i ← lift (value1 &&& 4278255615#u32)
+       let (return_carrier1, join_flag1) ←
+         (if i = 65535#u32
           then
-            let i2 ← value1 >>> 8#i32
-            let imm ← lift (UScalar.cast .U8 i2)
+            do
+            let i1 ← value1 >>> 16#i32
+            let imm ← lift (UScalar.cast .U8 i1)
             ok (some (some
-              ({ imm, shift := 8#u8, is_64bit := false, shift_ones := true } :
+              ({ imm, shift := 16#u8, is_64bit := false, shift_ones := true } :
               ASIMDMovModImm)), 0#u32)
           else
-            let iter ←
-              core.iter.traits.iterator.Iterator.step_by.trait_default
-                (core.iter.traits.iterator.IteratorRange
-                core.iter.range.StepU8) { start := 0#u8, «end» := 32#u8 }
-                8#usize
-            let (_, _, _, _, _, return_carrier2, loop_exit, _) ←
-              ASIMDMovModImm.maybe_from_u64_loop0 iter value value1 iter
-            let join_flag2 ←
-              match loop_exit with
-              | 1#uscalar => ok 2#u32
-              | _ => ok 0#u32
-            let return_carrier3 ←
-              match join_flag2 with
-              | 0#uscalar => ok (some none)
-              | _ => ok return_carrier2
-            ok (return_carrier3, join_flag2)
-      let i1 ←
-        match join_flag1 with
-        | 0#uscalar => ok 2#u32
-        | _ => ok join_flag1
-      ok (return_carrier1, i1, 0#u32)
-    | ScalarSize.Size64 =>
-      do
-      let (_, imm, _, _, return_carrier1, loop_exit, _) ←
-        ASIMDMovModImm.maybe_from_u64_loop1
-          { start := 0#i32, «end» := 8#i32 } value 0#u8
-      let join_flag1 ←
-        match loop_exit with
-        | 1#uscalar => ok 2#u32
-        | _ => ok 0#u32
-      let (o, i) ←
-        match join_flag1 with
-        | 0#uscalar =>
-          ok (some (some
-            ({ imm, shift := 0#u8, is_64bit := true, shift_ones := false } :
-            ASIMDMovModImm)), 2#u32)
-        | _ => ok (return_carrier1, join_flag1)
-      ok (o, i, 0#u32)
-    | ScalarSize.Size128 => ok (none, 0#u32, 1#u32)
+            do
+            let i1 ← lift (value1 &&& 4294902015#u32)
+            if i1 = 255#u32
+            then
+              let i2 ← value1 >>> 8#i32
+              let imm ← lift (UScalar.cast .U8 i2)
+              ok (some (some
+                ({ imm, shift := 8#u8, is_64bit := false, shift_ones := true }
+                : ASIMDMovModImm)), 0#u32)
+            else
+              let iter ←
+                core.iter.traits.iterator.Iterator.step_by.trait_default
+                  (core.iter.traits.iterator.IteratorRange
+                  core.iter.range.StepU8) { start := 0#u8, «end» := 32#u8 }
+                  8#usize
+              let (_, _, _, _, _, return_carrier2, loop_exit, _) ←
+                ASIMDMovModImm.maybe_from_u64_loop0 iter value value1 iter
+              let join_flag2 ←
+                match loop_exit with
+                | 1#uscalar => ok 2#u32
+                | _ => ok 0#u32
+              let return_carrier3 ←
+                (match join_flag2 with
+                 | 0#uscalar => ok (some none)
+                 | _ => ok return_carrier2 : Result (Option (Option
+                  ASIMDMovModImm)))
+              ok (return_carrier3, join_flag2) : Result ((Option (Option
+           ASIMDMovModImm)) × Std.U32))
+       let i1 ←
+         match join_flag1 with
+         | 0#uscalar => ok 2#u32
+         | _ => ok join_flag1
+       ok (return_carrier1, i1, 0#u32)
+     | ScalarSize.Size64 =>
+       do
+       let (_, imm, _, _, return_carrier1, loop_exit, _) ←
+         ASIMDMovModImm.maybe_from_u64_loop1
+           { start := 0#i32, «end» := 8#i32 } value 0#u8
+       let join_flag1 ←
+         match loop_exit with
+         | 1#uscalar => ok 2#u32
+         | _ => ok 0#u32
+       let (o, i) ←
+         (match join_flag1 with
+          | 0#uscalar =>
+            ok (some (some
+              ({ imm, shift := 0#u8, is_64bit := true, shift_ones := false } :
+              ASIMDMovModImm)), 2#u32)
+          | _ => ok (return_carrier1, join_flag1) : Result ((Option (Option
+           ASIMDMovModImm)) × Std.U32))
+       ok (o, i, 0#u32)
+     | ScalarSize.Size128 => ok (none, 0#u32, 1#u32) : Result ((Option (Option
+      ASIMDMovModImm)) × Std.U32 × Std.U32))
   let (return_carrier1, join_flag1) ←
-    match fallback_flag with
-    | 1#uscalar => ok (some none, 2#u32)
-    | _ => ok (return_carrier, join_flag)
+    (match fallback_flag with
+     | 1#uscalar => ok (some none, 2#u32)
+     | _ => ok (return_carrier, join_flag) : Result ((Option (Option
+      ASIMDMovModImm)) × Std.U32))
   match join_flag1 with
   | 2#uscalar =>
     match return_carrier1 with

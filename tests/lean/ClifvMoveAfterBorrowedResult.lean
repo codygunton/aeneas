@@ -124,22 +124,22 @@ def entry (x : Std.U32) : Result (core.result.Result Artifact Failure) := do
 def check : Result Bool := do
   let r ← entry 3#u32
   let ok1 ←
-    match r with
-    | core.result.Result.Ok a =>
-      if a.n = 3#u32
-      then
-        if a.len = 0#usize
-        then let i := alloc.vec.Vec.len a.func.v
-             ok (i = 1#usize)
-        else ok false
-      else ok false
-    | core.result.Result.Err _ => ok false
+    (match r with
+     | core.result.Result.Ok a =>
+       if a.n = 3#u32
+       then
+         if a.len = 0#usize
+         then let i := alloc.vec.Vec.len a.func.v
+              ok (i = 1#usize)
+         else ok false
+       else ok false
+     | core.result.Result.Err _ => ok false : Result Bool)
   let r1 ← entry 0#u32
   let err ←
-    match r1 with
-    | core.result.Result.Ok _ => ok false
-    | core.result.Result.Err f => let ⟨ e ⟩ := f
-                                  ok (e = 7#u32)
+    (match r1 with
+     | core.result.Result.Ok _ => ok false
+     | core.result.Result.Err f => let ⟨ e ⟩ := f
+                                   ok (e = 7#u32) : Result Bool)
   if ok1
   then ok err
   else ok false

@@ -44,25 +44,26 @@ impl_def core.iter.adapters.map.Map.Insts.CoreIterTraitsIteratorIterator {B :
     traitsiteratorIteratorInst opsfunctionFnMutFTupleClause0_ItemBInst)
 }
 
-/-- Trait implementation: [core::slice::iter::{impl core::iter::traits::double_ended::DoubleEndedIterator<&'_ T> for core::slice::iter::Iter<'a, T>}]
+/-- Trait implementation: [core::slice::iter::{impl core::iter::traits::double_ended::DoubleEndedIterator<&'a T> for core::slice::iter::Iter<'a, T>}]
     Source: '/rustc/library/core/src/slice/iter/macros.rs', lines 431:8-431:56; this code is generated from a macro invocation at: '/rustc/library/core/src/slice/iter.rs', lines 140:0-148:2
-    Name pattern: [core::iter::traits::double_ended::DoubleEndedIterator<core::slice::iter::Iter<'a, @T>, &'_ @T>] -/
+    Name pattern: [core::iter::traits::double_ended::DoubleEndedIterator<core::slice::iter::Iter<'a, @T>, &'a @T>] -/
 @[reducible, rust_trait_impl
-  "core::iter::traits::double_ended::DoubleEndedIterator<core::slice::iter::Iter<'a, @T>, &'_ @T>"]
+  "core::iter::traits::double_ended::DoubleEndedIterator<core::slice::iter::Iter<'a, @T>, &'a @T>"]
 def
-  core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+  core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
   (T : Type _) : core.iter.traits.double_ended.DoubleEndedIterator
   (core.slice.iter.Iter T) T := {
   iteratorInst := core.iter.traits.iterator.IteratorSliceIter T
   next_back := core.slice.iter.IteratorSliceIter.next_back
 }
 
-/-- Trait implementation: [core::slice::iter::{impl core::iter::traits::exact_size::ExactSizeIterator<&'_ T> for core::slice::iter::Iter<'_0, T>}]
+/-- Trait implementation: [core::slice::iter::{impl core::iter::traits::exact_size::ExactSizeIterator<&'_0 T> for core::slice::iter::Iter<'_0, T>}]
     Source: '/rustc/library/core/src/slice/iter/macros.rs', lines 140:8-140:50; this code is generated from a macro invocation at: '/rustc/library/core/src/slice/iter.rs', lines 140:0-148:2
-    Name pattern: [core::iter::traits::exact_size::ExactSizeIterator<core::slice::iter::Iter<'0, @T>, &'_ @T>] -/
+    Name pattern: [core::iter::traits::exact_size::ExactSizeIterator<core::slice::iter::Iter<'0, @T>, &'0 @T>] -/
 @[reducible, rust_trait_impl
-  "core::iter::traits::exact_size::ExactSizeIterator<core::slice::iter::Iter<'0, @T>, &'_ @T>"]
-def core.slice.iter.Iter.Insts.CoreIterTraitsExact_sizeExactSizeIteratorSharedT
+  "core::iter::traits::exact_size::ExactSizeIterator<core::slice::iter::Iter<'0, @T>, &'0 @T>"]
+def
+  core.slice.iter.Iter.Insts.CoreIterTraitsExact_sizeExactSizeIteratorShared0T
   (T : Type _) : core.iter.traits.exact_size.ExactSizeIterator
   (core.slice.iter.Iter T) T := {
   iteratorInst := core.iter.traits.iterator.IteratorSliceIter T
@@ -1458,11 +1459,11 @@ def test_rev : Result Unit := do
   let it ←
     core.iter.traits.iterator.Iterator.rev.trait_default
       (core.iter.traits.iterator.IteratorSliceIter Std.U32)
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) i
   let (o, it1) ←
     core.iter.adapters.rev.Rev.Insts.CoreIterTraitsIteratorIterator.next
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) it
   let b ←
     core.option.Option.Insts.CoreCmpPartialEqOption.eq
@@ -1470,7 +1471,7 @@ def test_rev : Result Unit := do
   massert b
   let (o1, _) ←
     core.iter.adapters.rev.Rev.Insts.CoreIterTraitsIteratorIterator.nth
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) it1 1#usize
   let b1 ←
     core.option.Option.Insts.CoreCmpPartialEqOption.eq
@@ -1482,11 +1483,11 @@ def test_rev : Result Unit := do
   let r ←
     core.iter.traits.iterator.Iterator.rev.trait_default
       (core.iter.traits.iterator.IteratorSliceIter Std.U32)
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) i1
   let i2 ←
     core.iter.adapters.rev.Rev.Insts.CoreIterTraitsIteratorIterator.fold
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) test_rev.closure.Insts.CoreOpsFunctionFnMutPairU32Shared0U32U32
       r 0#u32 ()
   massert (i2 = 4321#u32)
@@ -2050,9 +2051,9 @@ def test_provided_methods : Result Unit := do
   let (o4, _) ←
     core.slice.iter.Iter.Insts.CoreIterTraitsIteratorIteratorSharedAT.rposition
       test_provided_methods.closure_4.Insts.CoreOpsFunctionFnMutTupleShared0U32Bool
-      (core.slice.iter.Iter.Insts.CoreIterTraitsExact_sizeExactSizeIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsExact_sizeExactSizeIteratorShared0T
       Std.U32)
-      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedT
+      (core.slice.iter.Iter.Insts.CoreIterTraitsDouble_endedDoubleEndedIteratorSharedAT
       Std.U32) i6 ()
   let b2 ←
     core.option.Option.Insts.CoreCmpPartialEqOption.eq core.cmp.PartialEqUsize

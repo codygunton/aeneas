@@ -1664,50 +1664,76 @@ let extract_definitions (out : string -> unit) (config : gen_config)
     | _ -> ());
     !depth
   in
-  List.iter
-    (fun g ->
+  (* Lean: every group is printed into its own buffer, written to the file only
+     if it is well-formed (failed groups are dropped). The other backends keep
+     printing all the groups in a single box (as their extractors expect). *)
+  let shared =
+    if Config.backend () = Lean then None
+    else
       let buf = Buffer.create 4096 in
       let fmt = Format.formatter_of_buffer buf in
       FormatCompat.use_byte_width fmt;
-      if Config.backend () = Lean && max_switch_depth g > 12 then
-        Format.pp_set_geometry fmt ~max_indent:1999 ~margin:2000
-      else Format.pp_set_margin fmt 80;
+      Format.pp_set_margin fmt 80;
       Format.pp_open_vbox fmt 0;
-      let num_errors = List.length !Errors.error_list - !trial_errors in
-      let num_admits = !Errors.extracted_admits in
-      match export_decl_group fmt g with
-      | () -> (
-          (* An error or a placeholder makes the group ill-formed (the functions
-             whose extraction fails are already replaced by stubs, see
-             {!stub_failed_fun_decl}: their errors don't count) *)
-          let failed =
-            match !Errors.error_list with
-            | (file, line, span, msg) :: _
-              when List.length !Errors.error_list - !trial_errors > num_errors
-              ->
-                Some { span; file; line; msg }
-            | _ ->
-                if !Errors.extracted_admits > num_admits then
-                  Some
-                    {
-                      span = None;
-                      file = __FILE__;
-                      line = __LINE__;
-                      msg = "The extracted code contains placeholders";
-                    }
-                else None
-          in
-          match failed with
-          | None ->
-              Format.pp_close_box fmt ();
-              Format.pp_print_flush fmt ();
-              out (Buffer.contents buf)
-          | Some error -> drop_group g error)
-      | exception exn when Errors.is_item_failure exn ->
-          (* An exception was raised: drop the (partially printed) group,
-             record the failure and continue with the other groups *)
-          drop_group g (Errors.to_item_failure exn))
-    (Option.get ctx.crate.declarations)
+      Some (buf, fmt)
+  in
+  List.iter
+    (fun g ->
+      match shared with
+      | Some (_, fmt) -> (
+          try export_decl_group fmt g
+          with exn when Errors.is_item_failure exn ->
+            drop_group g (Errors.to_item_failure exn))
+      | None -> (
+          let buf = Buffer.create 4096 in
+          let fmt = Format.formatter_of_buffer buf in
+          FormatCompat.use_byte_width fmt;
+          if max_switch_depth g > 12 then
+            Format.pp_set_geometry fmt ~max_indent:1999 ~margin:2000
+          else Format.pp_set_margin fmt 80;
+          Format.pp_open_vbox fmt 0;
+          let num_errors = List.length !Errors.error_list - !trial_errors in
+          let num_admits = !Errors.extracted_admits in
+          match export_decl_group fmt g with
+          | () -> (
+              (* An error or a placeholder makes the group ill-formed (the
+                 functions whose extraction fails are already replaced by
+                 stubs, see {!stub_failed_fun_decl}: their errors don't
+                 count) *)
+              let failed =
+                match !Errors.error_list with
+                | (file, line, span, msg) :: _
+                  when List.length !Errors.error_list - !trial_errors
+                       > num_errors ->
+                    Some { span; file; line; msg }
+                | _ ->
+                    if !Errors.extracted_admits > num_admits then
+                      Some
+                        {
+                          span = None;
+                          file = __FILE__;
+                          line = __LINE__;
+                          msg = "The extracted code contains placeholders";
+                        }
+                    else None
+              in
+              match failed with
+              | None ->
+                  Format.pp_close_box fmt ();
+                  Format.pp_print_flush fmt ();
+                  out (Buffer.contents buf)
+              | Some error -> drop_group g error)
+          | exception exn when Errors.is_item_failure exn ->
+              (* An exception was raised: drop the (partially printed) group,
+                 record the failure and continue with the other groups *)
+              drop_group g (Errors.to_item_failure exn)))
+    (Option.get ctx.crate.declarations);
+  Option.iter
+    (fun (buf, fmt) ->
+      Format.pp_close_box fmt ();
+      Format.pp_print_flush fmt ();
+      out (Buffer.contents buf))
+    shared
 
 type extract_file_info = {
   filename : string;

@@ -134,48 +134,48 @@ def test_probe : Result Unit := do
         ]))
   let r ← probe { names := s } 3#u32 3#usize
   let b ←
-    match r with
-    | core.result.Result.Ok i =>
-      match i.val with
-      | 3 => ok true
-      | _ => ok false
-    | core.result.Result.Err _ => ok false
+    (match r with
+     | core.result.Result.Ok i =>
+       match i.val with
+       | 3 => ok true
+       | _ => ok false
+     | core.result.Result.Err _ => ok false : Result Bool)
   massert b
   let r1 ← probe { names := s } 5#u32 3#usize
   let b1 ←
-    match r1 with
-    | core.result.Result.Ok i =>
-      match i.val with
-      | 6 => ok true
-      | _ => ok false
-    | core.result.Result.Err _ => ok false
+    (match r1 with
+     | core.result.Result.Ok i =>
+       match i.val with
+       | 6 => ok true
+       | _ => ok false
+     | core.result.Result.Err _ => ok false : Result Bool)
   massert b1
   let r2 ← probe { names := s } 7#u32 3#usize
   let b2 ←
-    match r2 with
-    | core.result.Result.Ok _ => ok false
-    | core.result.Result.Err i =>
-      match i.val with
-      | 5 => ok true
-      | _ => ok false
+    (match r2 with
+     | core.result.Result.Ok _ => ok false
+     | core.result.Result.Err i =>
+       match i.val with
+       | 5 => ok true
+       | _ => ok false : Result Bool)
   massert b2
   let r3 ← probe { names := s } 9#u32 9#usize
   let b3 ←
-    match r3 with
-    | core.result.Result.Ok i =>
-      match i.val with
-      | 1 => ok true
-      | _ => ok false
-    | core.result.Result.Err _ => ok false
+    (match r3 with
+     | core.result.Result.Ok i =>
+       match i.val with
+       | 1 => ok true
+       | _ => ok false
+     | core.result.Result.Err _ => ok false : Result Bool)
   massert b3
   let r4 ← probe { names := s } 8#u32 2#usize
   let b4 ←
-    match r4 with
-    | core.result.Result.Ok _ => ok false
-    | core.result.Result.Err i =>
-      match i.val with
-      | 2 => ok true
-      | _ => ok false
+    (match r4 with
+     | core.result.Result.Ok _ => ok false
+     | core.result.Result.Err i =>
+       match i.val with
+       | 2 => ok true
+       | _ => ok false : Result Bool)
   massert b4
   let i ← count { names := s }
   massert (i = 5#usize)
