@@ -3479,7 +3479,10 @@ let apply_passes (crate : crate) : crate =
               | Some s ->
                   let env = Print.crate_to_fmt_env crate in
                   let name = Print.name_to_string env f.item_meta.name in
-                  Str.string_match (Str.regexp (".*" ^ Str.quote s)) name 0
+                  List.exists
+                    (fun s ->
+                      Str.string_match (Str.regexp (".*" ^ Str.quote s)) name 0)
+                    (String.split_on_char '|' s)
               | None -> false
             in
             let print (what : string) (f : fun_decl) =
