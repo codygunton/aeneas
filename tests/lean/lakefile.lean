@@ -28,6 +28,8 @@ package «tests» {}
 @[default_target] lean_lib CastSigned
 @[default_target] lean_lib ChunksExact
 @[default_target] lean_lib ClifvAssocTypeClauses
+@[default_target] lean_lib ClifvCharSwitch
+@[default_target] lean_lib ClifvConstRepeat
 @[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvJoinInnerLoop

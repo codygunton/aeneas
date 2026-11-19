@@ -152,7 +152,7 @@ def alloc.string.String.Insts.CoreFmtDebug : core.fmt.Debug String := {
 def test_string_ops : Result Unit := do
   let s ← alloc.string.String.new
   let s1 ← alloc.string.String.push_str s (toStr "ab")
-  let s2 ← alloc.string.String.push s1 '�'
+  let s2 ← alloc.string.String.push s1 '\u00e9'
   let i ← alloc.string.String.len s2
   massert (i = 4#usize)
   let t ← alloc.string.String.Insts.CoreCloneClone.clone s2
