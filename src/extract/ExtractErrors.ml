@@ -23,6 +23,7 @@ let extract_raise (file : string) (line : int) (span : Meta.span) (msg : string)
   extract_raise_opt_span file line (Some span) msg fmt extract
 
 let admit () =
+  incr Errors.extracted_admits;
   match Config.backend () with
   | Coq | FStar | HOL4 -> "admit"
   | Lean -> "sorry"

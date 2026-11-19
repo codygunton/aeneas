@@ -943,6 +943,161 @@ let export_types_group (fmt : Format.formatter) (config : gen_config)
         export_type_extra_info kind def)
       defs)
 
+(** The functions that we extract as stubs (see {!stub_failed_fun_decl}),
+    indexed by [(def_id, loop_id)]. The decision is made once per function: the
+    files of a split extraction are generated from the same context. *)
+let fun_stubs : bool PureUtils.FunLoopIdMap.t ref =
+  ref PureUtils.FunLoopIdMap.empty
+
+let is_stub_fun_decl (def : Pure.fun_decl) : bool =
+  PureUtils.FunLoopIdMap.find_opt (def.def_id, def.loop_id) !fun_stubs
+  = Some true
+
+(** [true] if the body or the signature of a function contains a translation
+    error ([EError] expressions, [TError] types): the extraction would print
+    placeholders ([sorry]) for them. *)
+let fun_decl_has_errors (def : Pure.fun_decl) : bool =
+  let visitor =
+    object
+      inherit [_] Pure.iter_expr
+      method! visit_EError _ _ _ = raise Utils.Found
+      method! visit_TError _ = raise Utils.Found
+    end
+  in
+  try
+    List.iter (visitor#visit_ty ()) def.signature.inputs;
+    visitor#visit_ty () def.signature.output;
+    Option.iter (fun (b : Pure.fun_body) -> visitor#visit_texpr () b.body) def.body;
+    false
+  with Utils.Found -> true
+
+(** The number of errors reported while extracting functions to a scratch
+    formatter (see {!fun_decl_extraction_failure}): those functions are replaced
+    by stubs, so their errors don't make the enclosing group ill-formed. *)
+let trial_errors = ref 0
+
+(** Extract a function declaration to a scratch formatter, and return the
+    failure if the extraction raised, reported an error or printed a placeholder
+    ([sorry]). *)
+let fun_decl_extraction_failure (ctx : gen_ctx) (def : Pure.fun_decl) :
+    cfailure option =
+  let num_errors = List.length !Errors.error_list in
+  let num_admits = !Errors.extracted_admits in
+  let fmt = Format.formatter_of_buffer (Buffer.create 4096) in
+  let failure =
+    match
+      Extract.extract_fun_decl ctx fmt ExtractBase.SingleNonRec false def;
+      Format.pp_print_flush fmt ()
+    with
+    | exception exn when Errors.is_item_failure exn ->
+        Some (Errors.to_item_failure exn)
+    | () -> (
+        match !Errors.error_list with
+        | (file, line, span, msg) :: _
+          when List.length !Errors.error_list > num_errors ->
+            Some { span; file; line; msg }
+        | _ ->
+            if !Errors.extracted_admits > num_admits then
+              Some
+                {
+                  span = Some def.item_meta.span;
+                  file = __FILE__;
+                  line = __LINE__;
+                  msg = "The extracted code contains placeholders";
+                }
+            else None)
+  in
+  trial_errors :=
+    !trial_errors + (List.length !Errors.error_list - num_errors);
+  Errors.extracted_admits := num_admits;
+  failure
+
+(** The functions whose translation failed (see [failures.json]): if they have
+    no body, it was dropped because of the failure. Computed when extracting
+    the first function, after the translation. *)
+let failed_fun_ids : FunDeclId.TreeSet.t option ref = ref None
+
+let fun_translation_failed (id : FunDeclId.id) : bool =
+  let ids =
+    match !failed_fun_ids with
+    | Some ids -> ids
+    | None ->
+        let ids =
+          List.fold_left
+            (fun ids (r : Errors.item_failure_record) ->
+              if r.kind = "fun" then
+                FunDeclId.TreeSet.add (FunDeclId.of_int r.def_id) ids
+              else ids)
+            FunDeclId.TreeSet.empty !Errors.item_failure_records
+        in
+        failed_fun_ids := Some ids;
+        ids
+  in
+  FunDeclId.TreeSet.mem id ids
+
+(** Lean: a function whose translation failed (its body or signature contains
+    errors, or its body was dropped) or whose extraction fails would be
+    extracted with [sorry]s, which make it (and all its callers)
+    noncomputable, or even with ill-formed syntax, or as an axiom. We instead
+    extract it as a stub: an [opaque] declaration with the same signature, whose
+    implementation fails with [Error.undef] (see
+    {!Extract.extract_fun_decl_gen}). The stub has no body, so it is not part of
+    a recursive group any more. The failure is recorded for [failures.json].
+
+    [trial]: whether we may extract the function to check that its extraction
+    succeeds. We only do it when extracting the transparent definitions: in
+    particular, the trait implementations which are dropped because their
+    extraction fails are only known at this point. *)
+let stub_failed_fun_decl ~(trial : bool) (ctx : gen_ctx) (def : Pure.fun_decl) :
+    Pure.fun_decl =
+  if Config.backend () <> Lean then def
+  else if Option.is_none def.body then (
+    (* The body was dropped because of a translation failure (already
+       reported) *)
+    if def.loop_id = None && fun_translation_failed def.def_id then
+      fun_stubs :=
+        PureUtils.FunLoopIdMap.add (def.def_id, None) true !fun_stubs;
+    def)
+  else
+    let key = (def.def_id, def.loop_id) in
+    let is_stub =
+      match PureUtils.FunLoopIdMap.find_opt key !fun_stubs with
+      | Some b -> b
+      | None when not trial -> false
+      | None ->
+          let failure =
+            if fun_decl_has_errors def then
+              Some
+                {
+                  span = Some def.item_meta.span;
+                  file = __FILE__;
+                  line = __LINE__;
+                  msg =
+                    "The translation of the function failed (see the previous \
+                     errors)";
+                }
+            else fun_decl_extraction_failure ctx def
+          in
+          Option.iter
+            (fun error ->
+              let rust_name = name_to_string ctx.trans_ctx def.item_meta.name in
+              let rust_name =
+                match def.loop_id with
+                | None -> rust_name
+                | Some (id, false) -> rust_name ^ " (loop " ^ Pure.LoopId.to_string id ^ ")"
+                | Some (id, true) ->
+                    rust_name ^ " (loop body " ^ Pure.LoopId.to_string id ^ ")"
+              in
+              Errors.record_item_failure ~kind:"fun" ~rust_name
+                ~def_id:(FunDeclId.to_int def.def_id)
+                error)
+            failure;
+          fun_stubs :=
+            PureUtils.FunLoopIdMap.add key (failure <> None) !fun_stubs;
+          failure <> None
+    in
+    if is_stub then { def with body = None } else def
+
 (** Utility.
 
     Export a group of functions, used by {!export_functions_group}.
@@ -996,6 +1151,7 @@ let export_functions_group_scc (fmt : Format.formatter) (config : gen_config)
       (fun i (def : Pure.fun_decl) ->
         [%ltrace name_to_string ctx.trans_ctx def.Pure.item_meta.name];
         let is_opaque = Option.is_none def.Pure.body in
+        let is_stub = is_stub_fun_decl def in
         let kind =
           if is_opaque then
             if config.interface then ExtractBase.Declared
@@ -1013,16 +1169,21 @@ let export_functions_group_scc (fmt : Format.formatter) (config : gen_config)
           else ExtractBase.SingleRec
         in
         let has_decr_clause =
-          has_decreases_clause def && config.extract_decreases_clauses
+          (not is_stub) && has_decreases_clause def
+          && config.extract_decreases_clauses
         in
-        (* Check if the definition needs to be filtered or not *)
+        (* Check if the definition needs to be filtered or not: the stubs are
+           extracted with the transparent definitions *)
         if
-          ((not is_opaque) && config.extract_transparent)
-          || (is_opaque && config.extract_opaque)
+          (is_stub && config.extract_transparent)
+          || (not is_stub)
+             && (((not is_opaque) && config.extract_transparent)
+                || (is_opaque && config.extract_opaque))
         then
           Some
             (fun () ->
-              Extract.extract_fun_decl ctx fmt kind has_decr_clause def;
+              Extract.extract_fun_decl ~stub:is_stub ctx fmt kind
+                has_decr_clause def;
               EmitJson.record_fun_if_enabled ctx def)
         else None)
       decls
@@ -1031,7 +1192,10 @@ let export_functions_group_scc (fmt : Format.formatter) (config : gen_config)
   if extract_defs <> [] then (
     (* Save the fact that we extract opaque definitions, if we do *)
     let contains_opaque =
-      List.exists (fun (d : Pure.fun_decl) -> Option.is_none d.body) decls
+      List.exists
+        (fun (d : Pure.fun_decl) ->
+          Option.is_none d.body && not (is_stub_fun_decl d))
+        decls
     in
     ctx.extracted_opaque := contains_opaque || !(ctx.extracted_opaque);
 
@@ -1074,6 +1238,11 @@ let export_fun_decls_decreases_templates (fmt : Format.formatter)
 let export_fun_decls_scc (fmt : Format.formatter) (config : gen_config)
     (ctx : gen_ctx) (decls : Pure.fun_decl list) : unit =
   if config.extract_fun_decls then
+    let decls =
+      List.map
+        (stub_failed_fun_decl ~trial:config.extract_transparent ctx)
+        decls
+    in
     (* Group the mutually recursive definitions *)
     let subgroups = ReorderDecls.group_reorder_fun_decls decls in
     (* Extract the subgroups *)
@@ -1257,26 +1426,31 @@ let export_trait_impl (fmt : Format.formatter) (_config : gen_config)
 
 (** A generic utility to generate the extracted definitions: as we may want to
     split the definitions between different files (or not), we can control what
-    is precisely extracted. *)
-let extract_definitions (fmt : Format.formatter) (config : gen_config)
+    is precisely extracted.
+
+    Every declaration group is formatted into its own buffer, which is given to
+    [out] only if the group was extracted successfully: a failure in the middle
+    of a group must not leave a partially printed declaration (and unbalanced
+    formatting boxes) in the generated file. *)
+let extract_definitions (out : string -> unit) (config : gen_config)
     (ctx : gen_ctx) : unit =
   (* Export the definition groups to the file, in the proper order.
      - [extract_decl]: extract the type declaration (if not filtered)
      - [extract_extra_info]: extra the extra type information (e.g.,
        the [Arguments] information in Coq).
   *)
-  let export_functions_group = export_functions_group fmt config ctx in
-  let export_global = export_global fmt config ctx in
-  let export_types_group = export_types_group fmt config ctx in
-  let export_trait_decl_group id =
-    export_trait_decl fmt config ctx id true false
-  in
-  let export_trait_decl_group_extra_info id =
-    export_trait_decl fmt config ctx id false true
-  in
-  let export_trait_impl ~is_rec = export_trait_impl fmt config ctx ~is_rec in
-
-  let export_decl_group (dg : declaration_group) : unit =
+  let export_decl_group (fmt : Format.formatter) (dg : declaration_group) : unit
+      =
+    let export_functions_group = export_functions_group fmt config ctx in
+    let export_global = export_global fmt config ctx in
+    let export_types_group = export_types_group fmt config ctx in
+    let export_trait_decl_group id =
+      export_trait_decl fmt config ctx id true false
+    in
+    let export_trait_decl_group_extra_info id =
+      export_trait_decl fmt config ctx id false true
+    in
+    let export_trait_impl ~is_rec = export_trait_impl fmt config ctx ~is_rec in
     match dg with
     | TypeGroup (NonRecGroup id) ->
         if config.extract_types then export_types_group false [ id ]
@@ -1415,14 +1589,86 @@ let extract_definitions (fmt : Format.formatter) (config : gen_config)
           "Mixed-recursive declaration groups are not supported"
   in
 
+  (* The items of a group: [(kind, rust name, id)] for [failures.json], and the
+     extraction id of the item *)
+  let group_items (g : declaration_group) :
+      (string * string * int * ExtractBase.id) list =
+    List.map
+      (fun (id : item_id) ->
+        let kind, def_id, ext_id =
+          match id with
+          | IdType id ->
+              ("type", TypeDeclId.to_int id, ExtractBase.TypeId (TAdtId id))
+          | IdFun id ->
+              ( "fun",
+                FunDeclId.to_int id,
+                ExtractBase.FunId (FromLlbc (FunId id, None)) )
+          | IdGlobal id ->
+              ("global", GlobalDeclId.to_int id, ExtractBase.GlobalId id)
+          | IdTraitDecl id ->
+              ("trait_decl", TraitDeclId.to_int id, ExtractBase.TraitDeclId id)
+          | IdTraitImpl id ->
+              ("trait_impl", TraitImplId.to_int id, ExtractBase.TraitImplId id)
+        in
+        let rust_name =
+          match Charon.LlbcAstUtils.crate_get_item_meta ctx.crate id with
+          | Some meta -> name_to_string ctx.trans_ctx meta.name
+          | None -> "<unknown item>"
+        in
+        (kind, rust_name, def_id, ext_id))
+      (Charon.GAstUtils.declaration_group_to_list g)
+  in
+  (* Drop a group: record the failure of its items, and remember that they are
+     not in the generated files *)
+  let drop_group (g : declaration_group) (error : cfailure) : unit =
+    List.iter
+      (fun (kind, rust_name, def_id, ext_id) ->
+        Errors.record_item_failure ~kind ~rust_name ~def_id error;
+        ExtractBase.dropped_items :=
+          ExtractBase.IdSet.add ext_id !ExtractBase.dropped_items)
+      (group_items g)
+  in
   List.iter
     (fun g ->
-      try export_decl_group g
-      with exn when Errors.is_item_failure exn ->
-        (* An exception was raised: record it and continue with the other groups *)
-        let error = Errors.to_item_failure exn in
-        Errors.record_item_failure ~kind:"decl_group"
-          ~rust_name:"<declaration group>" ~def_id:(-1) error)
+      let buf = Buffer.create 4096 in
+      let fmt = Format.formatter_of_buffer buf in
+      FormatCompat.use_byte_width fmt;
+      Format.pp_set_margin fmt 80;
+      Format.pp_open_vbox fmt 0;
+      let num_errors = List.length !Errors.error_list - !trial_errors in
+      let num_admits = !Errors.extracted_admits in
+      match export_decl_group fmt g with
+      | () -> (
+          (* An error or a placeholder makes the group ill-formed (the functions
+             whose extraction fails are already replaced by stubs, see
+             {!stub_failed_fun_decl}: their errors don't count) *)
+          let failed =
+            match !Errors.error_list with
+            | (file, line, span, msg) :: _
+              when List.length !Errors.error_list - !trial_errors > num_errors
+              ->
+                Some { span; file; line; msg }
+            | _ ->
+                if !Errors.extracted_admits > num_admits then
+                  Some
+                    {
+                      span = None;
+                      file = __FILE__;
+                      line = __LINE__;
+                      msg = "The extracted code contains placeholders";
+                    }
+                else None
+          in
+          match failed with
+          | None ->
+              Format.pp_close_box fmt ();
+              Format.pp_print_flush fmt ();
+              out (Buffer.contents buf)
+          | Some error -> drop_group g error)
+      | exception exn when Errors.is_item_failure exn ->
+          (* An exception was raised: drop the (partially printed) group,
+             record the failure and continue with the other groups *)
+          drop_group g (Errors.to_item_failure exn))
     (Option.get ctx.crate.declarations)
 
 type extract_file_info = {
@@ -1443,10 +1689,8 @@ type extract_file_info = {
 
 let extract_file (config : gen_config) (ctx : gen_ctx) (fi : extract_file_info)
     : unit =
-  (* Open the file and create the formatter *)
+  (* Open the file *)
   let out = open_out fi.filename in
-  let fmt = Format.formatter_of_out_channel out in
-  FormatCompat.use_byte_width fmt;
 
   (* Tell EmitJson file/namespace for the upcoming declarations. *)
   EmitJson.begin_file_if_enabled ~filename:fi.filename ~namespace:fi.namespace
@@ -1579,19 +1823,10 @@ let extract_file (config : gen_config) (ctx : gen_ctx) (fi : extract_file_info)
       else Printf.fprintf out "\n";
       (* Initialize the theory *)
       Printf.fprintf out "val _ = new_theory \"%s\"\n\n" fi.module_name);
-  (* From now onwards, we use the formatter *)
-  (* Set the margin *)
-  Format.pp_set_margin fmt 80;
-
-  (* Create a vertical box *)
-  Format.pp_open_vbox fmt 0;
-
-  (* Extract the definitions *)
-  extract_definitions fmt config ctx;
-
-  (* Close the box and end the formatting *)
-  Format.pp_close_box fmt ();
-  Format.pp_print_newline fmt ();
+  (* Extract the definitions (every group is formatted separately, see
+     {!extract_definitions}) *)
+  extract_definitions (output_string out) config ctx;
+  output_char out '\n';
 
   (* Close the module *)
   (match Config.backend () with

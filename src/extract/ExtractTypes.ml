@@ -336,6 +336,7 @@ let extract_literal_type (_ctx : extraction_ctx) (fmt : F.formatter)
     ]} *)
 
 let extract_ty_errors (fmt : F.formatter) : unit =
+  incr Errors.extracted_admits;
   match Config.backend () with
   | FStar | Coq -> F.pp_print_string fmt "admit"
   | Lean -> F.pp_print_string fmt "sorry"

@@ -451,6 +451,13 @@ let names_maps_add (id_to_string : id -> string) (id : id)
     let names_map = names_map_add id_to_string (id, span) name nm.names_map in
     { nm with strict_names_map; names_map }
 
+(** The items (types, globals, trait declarations and implementations) whose
+    extraction failed: their declaration groups are not in the generated files
+    (see [Translate.extract_definitions]). The declarations are extracted in
+    dependency order, so a reference to a dropped item is detected (and is an
+    error) when extracting the items which use it. *)
+let dropped_items : IdSet.t ref = ref IdSet.empty
+
 (** The [id_to_string] function to print nice debugging messages if there are
     collisions *)
 let names_maps_get (span : Meta.span option) (id_to_string : id -> string)
@@ -464,7 +471,15 @@ let names_maps_get (span : Meta.span option) (id_to_string : id -> string)
            (IdMap.bindings m))
     ^ "\n]"
   in
-  if allow_collisions id then
+  if IdSet.mem id !dropped_items then (
+    let err =
+      "Reference to an item whose extraction failed: " ^ id_to_string id
+    in
+    [%save_error_opt_span] span err;
+    match backend () with
+    | Lean -> "sorry /- " ^ err ^ "-/"
+    | _ -> "(ERROR: " ^ id_to_string id ^ ")")
+  else if allow_collisions id then
     let m = nm.unsafe_names_map.id_to_name in
     match IdMap.find_opt id m with
     | Some s -> s
