@@ -529,18 +529,22 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
     let funs = FunDeclId.Map.values trans_ctx.fun_ctx.to_extract in
     (* Split between opaque and transparent *)
     (* Debugging aid: with [AENEAS_ONLY=<substring>], only the bodies of the
-       functions whose name contains the substring are translated (the others
-       are made opaque). *)
+       functions whose name contains the substring (or one of the
+       [|]-separated substrings) are translated (the others are made
+       opaque). *)
     let funs =
       match Sys.getenv_opt "AENEAS_ONLY" with
       | None -> funs
       | Some s ->
           let contains name =
-            let rec go i =
-              i + String.length s <= String.length name
-              && (String.sub name i (String.length s) = s || go (i + 1))
-            in
-            go 0
+            List.exists
+              (fun s ->
+                let rec go i =
+                  i + String.length s <= String.length name
+                  && (String.sub name i (String.length s) = s || go (i + 1))
+                in
+                go 0)
+              (String.split_on_char '|' s)
           in
           List.map
             (fun (d : fun_decl) ->

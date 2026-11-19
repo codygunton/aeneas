@@ -29,6 +29,7 @@ package «tests» {}
 @[default_target] lean_lib ChunksExact
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvLoopEarlyReturn
+@[default_target] lean_lib ClifvLoopEscapeMovedLocal
 @[default_target] lean_lib ClifvLoopOuterBreak
 @[default_target] lean_lib ClifvLoopOuterContinue
 @[default_target] lean_lib ClifvNestedLoopReturn
