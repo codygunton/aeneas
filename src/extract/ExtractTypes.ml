@@ -100,6 +100,15 @@ let extract_literal (span : Meta.span) (fmt : F.formatter) ~(is_pattern : bool)
           if inside then F.pp_print_string fmt ")")
   | VStr s -> extract_str span ~inside fmt s
   | VPureString s -> extract_pure_string fmt s
+  | VFloat fv when backend () = Lean ->
+      (* Bit-exact: we use the IEEE bits computed by rustc *)
+      F.pp_print_string fmt
+        ("(" ^ float_name fv.float_ty ^ ".ofBitsNat 0x"
+        ^ Z.format "%x" fv.float_bits
+        ^ " /- " ^ fv.float_value ^ " -/)")
+  | VChar c when backend () = Lean ->
+      F.pp_print_string fmt
+        ("(Char.ofNat 0x" ^ Printf.sprintf "%x" (Uchar.to_int c) ^ ")")
   | VChar _ | VFloat _ | VByteStr _ ->
       [%admit_raise] span
         "Float, string, non-ASCII chars and byte string literals are \

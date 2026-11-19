@@ -484,6 +484,27 @@ let extract_cast_kind_gen (span : Meta.span)
                 boolean), it gets compiled to [b] (i.e., no cast
                 is introduced). *)
              [%craise] span "Unexpected cast: bool to bool"
+         | TFloat fsrc, (TInt _ | TUInt _) when backend () = Lean ->
+             (* Rust [as]: truncation, saturation, NaN to 0 *)
+             let tgt = literal_as_integer tgt in
+             let cast_str =
+               float_name fsrc
+               ^
+               if Scalars.integer_type_is_signed tgt then ".toIScalar"
+               else ".toUScalar"
+             in
+             (cast_str, None, Some (integer_type_to_string tgt))
+         | (TInt _ | TUInt _), TFloat ftgt when backend () = Lean ->
+             (* Rust [as]: round to nearest, ties to even *)
+             let src = literal_as_integer src in
+             let cast_str =
+               (if Scalars.integer_type_is_signed src then "IScalar"
+                else "UScalar")
+               ^ ".to" ^ float_name ftgt
+             in
+             (cast_str, None, None)
+         | TFloat fsrc, TFloat ftgt when backend () = Lean ->
+             (float_name fsrc ^ ".to" ^ float_name ftgt, None, None)
          | _ -> [%craise] span "Unreachable"
        in
        (* Print the name of the function *)
@@ -566,7 +587,7 @@ let extract_unop (span : Meta.span)
     (extract_expr : inside:bool -> texpr -> unit) (fmt : F.formatter)
     ~(inside : bool) (unop : unop) (arg : texpr) : unit =
   match unop with
-  | Not _ | Neg _ | ArrayToSlice ->
+  | Not _ | Neg _ | FNeg _ | ArrayToSlice ->
       let unop = unop_name unop in
       if inside then F.pp_print_string fmt "(";
       F.pp_print_string fmt unop;
@@ -591,7 +612,25 @@ let extract_binop (span : Meta.span) (ctx : extraction_ctx)
     ~(inside : bool) (binop : binop) (arg0 : texpr) (arg1 : texpr) : unit =
   if inside then F.pp_print_string fmt "(";
   (* Some binary operations have a special notation depending on the backend *)
+  let is_float_binop =
+    match binop with
+    | FAdd _ | FSub _ | FMul _ | FDiv _ | FRem _
+    | Lt (TFloat _)
+    | Le (TFloat _)
+    | Ge (TFloat _)
+    | Gt (TFloat _)
+    | Eq (TLiteral (TFloat _))
+    | Ne (TLiteral (TFloat _)) -> true
+    | _ -> false
+  in
   (match (backend (), binop) with
+  | _ when is_float_binop ->
+      (* Floats: IEEE operations of the backend library (e.g. [F32.add], [F32.lt]) *)
+      F.pp_print_string fmt (named_binop_name binop);
+      F.pp_print_space fmt ();
+      extract_expr ~inside:true arg0;
+      F.pp_print_space fmt ();
+      extract_expr ~inside:true arg1
   | HOL4, (Eq _ | Ne _)
   | (FStar | Coq | Lean), (Eq _ | Lt _ | Le _ | Ne _ | Ge _ | Gt _)
   | (FStar | Lean), (BoolAnd | BoolOr)

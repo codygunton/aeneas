@@ -663,6 +663,13 @@ and binop =
           [assert!(b0 && b1)] can be translated to [assert b0; assert b1]. *)
   | BoolXor
       (** Boolean exclusive-or, used to translate Rust [a ^ b] on booleans. *)
+  | FAdd of float_type
+      (** Float arithmetic (IEEE, cannot fail). The float comparisons use
+          [Eq], [Ne], [Lt], [Le], [Ge] and [Gt] with a float type. *)
+  | FSub of float_type
+  | FMul of float_type
+  | FDiv of float_type
+  | FRem of float_type
 
 and builtin_impl_data =
   | BuiltinCopy
@@ -1212,6 +1219,7 @@ and tpat = { pat : pat; ty : ty }
 type unop =
   | Not of integer_type option
   | Neg of integer_type
+  | FNeg of float_type
   | Cast of cast_kind
   | ArrayToSlice
 

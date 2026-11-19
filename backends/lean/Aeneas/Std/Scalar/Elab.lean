@@ -98,6 +98,9 @@ meta partial def elabSpecial (ty : String) (bw size : Syntax) (stx : Syntax) : C
     if val == "%BitWidth" then
       trace[ScalarElabSubst] "elabSpecial: replaced `%BitWidth`"
       pure bw
+    else if val.startsWith "\"" then
+      -- String literals (e.g. `rust_fun` name patterns): `%s` is the Rust name of the type
+      pure (.atom info (val.replace "%s" ty.toLower))
     else pure (.atom info val)
   | .ident info rawVal val preresolved =>
     trace[ScalarElabSubst] "elabSpecial: ident: {stx}"
