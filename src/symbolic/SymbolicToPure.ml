@@ -280,6 +280,63 @@ let translate_trait_decl (ctx : Contexts.decls_ctx) (trait_decl : A.trait_decl)
     methods;
   }
 
+(** The pure signature of every method of a trait implementation must be the
+    signature of the trait method instantiated with the implementation's
+    generics, otherwise the instance doesn't type-check. This is not the case
+    when the implementing type contains mutable borrows whose regions are
+    parameters of the implementation (e.g., [impl Trait for Ctx<'a>] where
+    [Ctx<'a>] contains a [&'a mut T]): the implemented methods then have
+    backward functions for those regions, which the signatures of the trait
+    declaration (in which [Self] is an opaque type) don't have.
+
+    We compare the shapes of the signatures (the number of backward functions,
+    and whether the forward output is eliminated), which are equal when the
+    types are equal, and return the name of the first method whose shapes
+    differ. Builtin implementations are not checked. *)
+let trait_impl_mismatching_method (ctx : Contexts.decls_ctx)
+    (trait_impl : A.trait_impl) : string option =
+  let span = Some trait_impl.item_meta.span in
+  let trait_decl =
+    [%silent_unwrap_opt_span] span
+      (TraitDeclId.Map.find_opt trait_impl.impl_trait.id ctx.crate.trait_decls)
+  in
+  let is_builtin =
+    Option.is_some
+      (match_name_with_generics_find_opt ctx trait_decl.item_meta.name
+         trait_impl.impl_trait.generics
+         (ExtractBuiltin.builtin_trait_impls_map ()))
+  in
+  let shape (dsg : decomposed_fun_type) =
+    ( List.length (List.filter Option.is_some (compute_back_tys dsg)),
+      dsg.fwd_info.ignore_output )
+  in
+  let mismatch (method_id : TraitMethodId.id) (m : T.fun_decl_ref T.binder) :
+      bool =
+    try
+      match
+        ( FunDeclId.Map.find_opt m.binder_value.id ctx.fun_ctx.fun_decls,
+          TraitMethodId.Map.find_opt method_id trait_decl.methods )
+      with
+      | Some fdecl, Some bound_method ->
+          let impl_sigs = translate_fun_sigs_from_decl ctx fdecl in
+          let trait_sigs =
+            translate_flat_trait_method_sigs ctx trait_decl method_id
+              bound_method
+          in
+          shape impl_sigs.dsg.fun_ty <> shape trait_sigs.dsg.fun_ty
+      | _ -> false
+    with exn when Errors.is_item_failure exn -> false
+  in
+  if is_builtin then None
+  else
+    Option.map
+      (fun (method_id, _) ->
+        Charon.GAstUtils.get_method_name ctx.crate trait_impl.impl_trait.id
+          method_id)
+      (List.find_opt
+         (fun (method_id, m) -> mismatch method_id m)
+         (TraitMethodId.Map.to_list trait_impl.methods))
+
 let translate_trait_impl (ctx : Contexts.decls_ctx) (trait_impl : A.trait_impl)
     : trait_impl =
   [%ltrace

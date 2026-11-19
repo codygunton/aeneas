@@ -621,6 +621,31 @@ let evaluate_function_symbolic (synthesize : bool) (decls_ctx : decls_ctx)
       (bound_fun_sig_of_decl fdef)
   in
 
+  (* The region groups whose backward functions are filtered out of the pure
+     signature because they have no inputs and no outputs (see
+     {!SymbolicToPureTypes.compute_back_tys}): this is typically the case of
+     region groups which only appear below shared borrows. The translation
+     never looks at the symbolic expressions of those backward functions (see
+     [translate_forward_end]), so when synthesizing we do not compute them:
+     ending the corresponding input abstractions can require ending
+     sub-abstractions which the interpreter doesn't support yet (for instance
+     when a shared region appears inside a value which is mutably borrowed,
+     like [&'a mut Lower<'b>] where [Lower<'b>] contains a [&'b T]). When only
+     borrow-checking ([synthesize = false]) we still evaluate them. *)
+  let filtered_back_rgs =
+    if not synthesize then RegionGroupId.Set.empty
+    else
+      try
+        let sigs =
+          SymbolicToPureTypes.translate_fun_sigs_from_decl decls_ctx fdef
+        in
+        RegionGroupId.Map.fold
+          (fun gid (info : Pure.back_sg_info) acc ->
+            if info.filter then RegionGroupId.Set.add gid acc else acc)
+          sigs.dsg.fun_ty.back_sg RegionGroupId.Set.empty
+      with exn when Errors.is_item_failure exn -> RegionGroupId.Set.empty
+  in
+
   (* Create the continuation to finish the evaluation *)
   let config = mk_config SymbolicMode in
   let finish (res : statement_eval_res) (ctx : eval_ctx) =
@@ -672,9 +697,13 @@ let evaluate_function_symbolic (synthesize : bool) (decls_ctx : decls_ctx)
             inst_sg back_id ret_value ctx
         in
         let back_el =
-          RegionGroupId.mapi
-            (fun gid _ -> (gid, cc_pop (finish_back_eval gid)))
-            regions_hierarchy
+          List.filter_map
+            (fun x -> x)
+            (RegionGroupId.mapi
+               (fun gid _ ->
+                 if RegionGroupId.Set.mem gid filtered_back_rgs then None
+                 else Some (gid, cc_pop (finish_back_eval gid)))
+               regions_hierarchy)
         in
         let back_el = RegionGroupId.Map.of_list back_el in
         (* Put everything together *)
