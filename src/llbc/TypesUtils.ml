@@ -477,6 +477,53 @@ let ty_has_mut_borrow_for_region_in_set (infos : TypesAnalysis.type_infos)
 let ty_has_mut_borrows (infos : TypesAnalysis.type_infos) (ty : ty) : bool =
   ty_has_mut_borrow_for_region_in_pred infos (fun _ -> true) ty
 
+(** Return [true] if the type contains a mutable borrow below a borrow, i.e.,
+    nested borrows which are not all shared (for instance [&'a mut &'b mut T],
+    or [&'a mut S<'b>] where [S<'b>] contains a [&'b mut T]). This is
+    conservative: we consider the ADTs which contain both nested borrows and
+    mutable borrows in their fields, the ADTs containing mutable borrows used
+    below a borrow, and the type parameters used below a borrow and
+    instantiated with types containing mutable borrows. *)
+let ty_has_mut_borrows_under_borrows (infos : TypesAnalysis.type_infos)
+    (ty : ty) : bool =
+  let obj =
+    object
+      inherit [_] iter_ty as super
+
+      method! visit_TRef under_borrow r ty rkind =
+        if under_borrow && rkind = RMut then raise Found;
+        super#visit_TRef true r ty rkind
+
+      method! visit_TAdt under_borrow tref =
+        match tref.builtin with
+        | Some (TTuple | TBox | TStr) -> super#visit_TAdt under_borrow tref
+        | None ->
+            let info = TypeDeclId.TreeMap.find tref.id infos in
+            if
+              info.borrows_info.contains_nested_borrows
+              && info.borrows_info.contains_mut_borrow
+            then raise Found;
+            if
+              under_borrow
+              && (info.borrows_info.contains_mut_borrow
+                 || info.borrows_info.contains_static_mut
+                 || not (RegionId.Set.is_empty info.mut_regions))
+            then raise Found;
+            List.iter2
+              (fun (pinfo : TypesAnalysis.type_param_info) ty ->
+                if
+                  (under_borrow || pinfo.under_borrow)
+                  && ty_has_mut_borrows infos ty
+                then raise Found)
+              info.param_infos tref.generics.types;
+            super#visit_TAdt under_borrow tref
+    end
+  in
+  try
+    obj#visit_ty false ty;
+    false
+  with Found -> true
+
 (** Small helper *)
 let raise_if_not_rty_visitor =
   object (self)

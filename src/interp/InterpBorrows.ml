@@ -1947,6 +1947,44 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
      we don't register values while doing so.
   *)
   let push_fail _ = [%craise] span "Unreachable" in
+  (* Nested borrows.
+
+     The values below the ignored (or ended) loans and borrows of the
+     abstraction may contain borrows and projectors belonging to the
+     abstraction: this happens with nested borrows (for instance the region
+     ['b] of an input [&'a mut S<'b>] where [S<'b>] contains a [&'b T]), and in
+     particular with the static region, which is often hidden in ADTs (for
+     instance [Cow<'static, str>]).
+
+     We support the case where the regions of the abstraction only appear below
+     *shared* borrows in the type of the nested value: we flatten the shared
+     borrows and the projectors over symbolic values into the abstraction, like
+     the non-nested ones (we drop the ignored borrows and loans which contain
+     them, like in the non-nested case). This preserves the semantics: ending a
+     shared borrow gives back nothing, and the meaning of a projector over a
+     symbolic value doesn't depend on its position in the abstraction. We also
+     flatten the shared loans (of the regions of the abstraction) which appear
+     below an ignored mutable loan belonging to a parent abstraction: this
+     happens when joining values containing nested shared borrows, for instance
+     [&'a mut S<'b>] where the [&'b T] inside the joined value borrows a loan of
+     the abstraction of ['b]. The only information we lose is the projection of
+     the shared borrows of the value given back to an ignored mutable borrow
+     (or loan) belonging to a parent abstraction ([AIgnoredMutBorrow (Some _,
+     _)]), which is used to expand those shared borrows later: if we need it,
+     the interpreter fails (it can't find the shared loan). We still reject
+     nested mutable borrows. *)
+  let shared_only_in (ty : ty) : bool =
+    not
+      (ty_has_mut_borrow_for_region_in_set ctx.type_ctx.type_infos
+         abs0.regions.owned ty)
+  in
+  let push_nested (av : tavalue) : unit =
+    match av.value with
+    | ABorrow (ASharedBorrow _)
+    | ALoan (ASharedLoan _)
+    | ASymbolic (_, (AProjLoans _ | AProjBorrows _)) -> push_avalue av
+    | _ -> [%craise] span "Nested borrows are not supported yet"
+  in
   (* Function to explore an avalue and destructure it *)
   let rec list_avalues (allow_borrows : int) (push : tavalue -> unit)
       (av : tavalue) : unit =
@@ -1989,27 +2027,19 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
             let value = ALoan (AMutLoan (pm, bid, ignored)) in
             push { value; ty }
         | AIgnoredMutLoan (opt_bid, child_av) ->
-            (* We don't support nested borrows for now *)
-            [%cassert] span
-              (not
-                 (ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty))
-              "Nested borrows are not supported yet";
-            [%sanity_check] span (opt_bid = None);
-            (* Simply explore the child *)
-            list_avalues 0 push_fail child_av
+            (* Nested borrows: see [shared_only_in] *)
+            if not (ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty)
+            then [%sanity_check] span (opt_bid = None);
+            (* Explore the child *)
+            list_nested_avalues "Nested borrows are not supported yet" child_av
         | AEndedSharedLoan (sv, child_av) ->
-            (* We don't support nested borrows for now *)
-            [%cassert] span
-              (not
-                 (ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty))
-              "Nested borrows are not supported yet";
             (* Explore the shared value *)
             (* Destructure the shared value *)
             let avl, _ =
               if destructure_shared_values then list_values sv else ([], sv)
             in
             (* Explore the child *)
-            list_avalues 0 push_fail child_av;
+            list_nested_avalues "Nested borrows are not supported yet" child_av;
             (* Push the avalues introduced because we decomposed the inner loans
                in the shared value - see the ASharedLoan case *)
             List.iter push avl
@@ -2018,13 +2048,8 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
         | AEndedIgnoredMutLoan
             { child = child_av; given_back = _; given_back_meta = _ }
         | AIgnoredSharedLoan child_av ->
-            (* We don't support nested borrows for now *)
-            [%cassert] span
-              (not
-                 (ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty))
-              "Nested borrows are not supported yet";
-            (* Simply explore the child *)
-            list_avalues 0 push_fail child_av)
+            (* Explore the child *)
+            list_nested_avalues "Nested borrows are not supported yet" child_av)
     | ABorrow bc -> (
         (* Sanity check - rem.: may be redundant with [push_fail] *)
         [%sanity_check] span (allow_borrows > 0);
@@ -2041,25 +2066,31 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
             (* Nothing specific to do: keep the value as it is *)
             push av
         | AIgnoredMutBorrow (opt_bid, child_av) ->
-            (* We don't support nested borrows for now *)
-            [%cassert] span
-              (not
-                 (ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty))
-              "Found a case of unsupported nested borrows";
-            [%sanity_check] span (opt_bid = None);
-            (* Just explore the child *)
-            list_avalues (allow_borrows - 1) push_fail child_av
+            if ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty
+            then
+              (* Nested borrows (see [list_nested_avalues]): if the borrow
+                 belongs to a parent abstraction ([opt_bid = Some _]), we drop
+                 it, see the comment for [shared_only_in] *)
+              list_nested_avalues "Found a case of unsupported nested borrows"
+                child_av
+            else (
+              [%sanity_check] span (opt_bid = None);
+              (* Just explore the child *)
+              list_avalues (allow_borrows - 1) push_fail child_av)
         | AEndedIgnoredMutBorrow
             { child = child_av; given_back; given_back_meta = _ } ->
             (* Just explore the child *)
             let allow_borrows = allow_borrows - 1 in
             list_avalues allow_borrows push_avalue child_av;
             list_avalues allow_borrows push_avalue given_back
-        | AProjSharedBorrow asb ->
-            (* We don't support nested borrows *)
-            [%cassert] span (asb = [])
-              "Found a case of unsupported nested borrows";
-            (* Nothing specific to do *)
+        | AProjSharedBorrow _ ->
+            (* The projected shared borrows are the shared reborrows (of the
+               regions of the abstraction) of the borrows inside a shared value
+               borrowed by another region, for instance the static borrows
+               inside [&'a Function]. We drop them: ending a shared borrow gives
+               back nothing (the values read through shared borrows are
+               immutable), and those reborrows are not reachable from the
+               program (they only keep the loans alive). *)
             ()
         | AEndedMutBorrow _ | AEndedSharedBorrow ->
             (* If we get there it means the abstraction ended: it should not
@@ -2097,6 +2128,13 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
             (* Just ignore *)
             ()
         | AEmpty -> ())
+  (* Explore a value below an ignored or ended loan or borrow (see
+     [shared_only_in]) *)
+  and list_nested_avalues (msg : string) (child_av : tavalue) : unit =
+    if ty_has_borrows (Some span) ctx.type_ctx.type_infos child_av.ty then (
+      [%cassert] span (shared_only_in child_av.ty) msg;
+      list_avalues 1 push_nested child_av)
+    else list_avalues 0 push_fail child_av
   and list_values (v : tvalue) : tavalue list * tvalue =
     let ty = v.ty in
     match v.value with
@@ -2127,8 +2165,12 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
         | VSharedLoan (bids, sv) ->
             let avl, sv = list_values sv in
             if destructure_shared_values then (
-              (* Rem.: the shared value can't contain loans nor borrows *)
-              [%cassert] span (ty_no_regions ty)
+              (* Rem.: the shared value can't contain loans nor borrows, but
+                 its type may contain shared borrows (for instance the static
+                 borrows hidden in [Cow<'static, str>]): those are not
+                 decomposed, see the [VSymbolic] case below. *)
+              [%cassert] span
+                (not (ty_has_mut_borrows ctx.type_ctx.type_infos ty))
                 "Nested borrows are not supported yet";
               let av : tavalue =
                 [%sanity_check] span
@@ -2165,18 +2207,62 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
             else (avl, { v with value = VLoan (VSharedLoan (bids, sv)) })
         | VMutLoan _ -> [%craise] span "Unreachable")
     | VSymbolic _ ->
-        (* For now, we fore all symbolic values containing borrows to be eagerly
-           expanded *)
+        (* For now, we force all symbolic values containing mutable borrows to
+           be eagerly expanded. The symbolic values containing shared borrows
+           can't be expanded in general (for instance a [Vec<Cow<'static, str>>])
+           and don't contain loans: there is nothing to decompose. *)
         [%sanity_check] span
-          (not (ty_has_borrows (Some span) ctx.type_ctx.type_infos ty));
+          (not (ty_has_mut_borrows ctx.type_ctx.type_infos ty));
         ([], v)
   in
 
   (* Destructure the avalues *)
   List.iter (list_avalues 2 push_avalue) abs0.avalues;
   let avalues = !avalues in
+  (* The continuation of an abstraction whose regions only appear below shared
+     borrows in its inputs and outputs gives back nothing: if it contains
+     nested borrows or loans (which the joins don't support, see
+     {!InterpJoinCore.tevalue_add_marker}) we replace it with the trivial
+     continuation, like the one of the abstractions introduced by the joins for
+     values without mutable borrows (see
+     {!InterpMatchCtxs.MakeJoinMatcher.no_loans_no_bottoms_to_symbolic_value_with_borrows}). *)
+  let cont =
+    let has_nested (ev : tevalue) : bool =
+      let visitor =
+        object
+          inherit [_] iter_tavalue as super
+
+          method! visit_eborrow_content env bc =
+            match bc with
+            | EMutBorrow _ | EEndedIgnoredMutBorrow _ ->
+                super#visit_eborrow_content env bc
+            | _ -> raise Utils.Found
+
+          method! visit_eloan_content env lc =
+            match lc with
+            | EMutLoan _ | EEndedMutLoan _ | EEndedIgnoredMutLoan _ ->
+                super#visit_eloan_content env lc
+            | _ -> raise Utils.Found
+        end
+      in
+      try
+        visitor#visit_tevalue () ev;
+        false
+      with Utils.Found -> true
+    in
+    match abs0.cont with
+    | Some { output = Some output; input = Some input }
+      when shared_only_in output.ty && shared_only_in input.ty
+           && (has_nested output || has_nested input) ->
+        Some
+          {
+            output = Some (mk_simpl_etuple ~borrow_proj:true []);
+            input = Some (mk_simpl_etuple ~borrow_proj:false []);
+          }
+    | cont -> cont
+  in
   (* Update *)
-  { abs0 with avalues; kind = abs_kind; can_end }
+  { abs0 with avalues; kind = abs_kind; can_end; cont }
 
 let abs_is_destructured (span : Meta.span) (destructure_shared_values : bool)
     (ctx : eval_ctx) (abs : abs) : bool =

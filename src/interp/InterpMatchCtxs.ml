@@ -709,9 +709,14 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
       (* Create the abstraction expression *)
       let cont : abs_cont option =
         if S.with_abs_conts then
+          (* Note that we check whether the region of the abstraction is used
+             in a mutable borrow, not whether the type contains mutable borrows:
+             with nested borrows the type may contain mutable borrows of other
+             regions (e.g., [&'a mut S<'b>] where ['b] only appears below shared
+             borrows), in which case the abstraction gives back nothing. *)
           if
-            TypesUtils.ty_has_mut_borrows ctx0.type_ctx.type_infos
-              ty_with_regions
+            TypesUtils.ty_has_mut_borrow_for_region_in_set
+              ctx0.type_ctx.type_infos regions ty_with_regions
           then
             (* We used to generate a continuation of the following shape:
                {[

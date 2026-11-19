@@ -1,0 +1,5 @@
+[[92mInfo[39m ] Imported: tests/llbc/clifv_static_nested_borrows.llbc
+[[91mError[39m] Internal error, please file an issue
+Source: 'tests/src/clifv_static_nested_borrows.rs', lines 60:44-60:45
+Compiler source: interp/Invariants.ml, line 915
+
