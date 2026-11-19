@@ -114,6 +114,30 @@ pub fn stack_top_bool(a: bool) -> bool {
     }
 }
 
+/// Instantiated with closures from two different functions: the closure
+/// types are both `{closure}`, so the instance names must keep the function
+/// each closure comes from (`Wrap<add_one::{closure}>` vs
+/// `Wrap<times_two::{closure}>`).
+pub struct Wrap<F> {
+    pub f: F,
+}
+
+impl<F: Fn(u32) -> u32> Wrap<F> {
+    pub fn call(&self, x: u32) -> u32 {
+        (self.f)(x)
+    }
+}
+
+pub fn add_one(x: u32) -> u32 {
+    let w = Wrap { f: |y: u32| y + 1 };
+    w.call(x)
+}
+
+pub fn times_two(x: u32) -> u32 {
+    let w = Wrap { f: |y: u32| y * 2 };
+    w.call(x)
+}
+
 #[verify::test]
 pub fn test_traits() {
     // Rust results: 9 + 4 = 13; 2 * 6 = 12; 2 * 3 * 3 = 18.
@@ -127,13 +151,15 @@ pub fn test_traits() {
 
 #[verify::test]
 pub fn test_generics() {
-    // Rust results: 7, 0, 2, 16, 5, true.
+    // Rust results: 7, 0, 2, 16, 5, true, 6, 10.
     assert!(use_id(7, true) == 7);
     assert!(use_id(7, false) == 0);
     assert!(swap_u32(1, 2) == 2);
     assert!(swap_square(Square { side: 3 }, Square { side: 4 }) == 16);
     assert!(stack_top(4, 5) == 5);
     assert!(stack_top_bool(true));
+    assert!(add_one(5) == 6);
+    assert!(times_two(5) == 10);
 }
 
 #[cfg(test)]

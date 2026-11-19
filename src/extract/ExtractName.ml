@@ -77,7 +77,17 @@ let pattern_to_extract_name_visitor =
      not going through the patterns, but directly to strings. *)
   let name_is_target (s : string) : bool = String.contains s '-' in
 
-  (* Make the names shorter. For now, we simply remove all prefixes. *)
+  (* Make the names shorter. For now, we simply remove all prefixes.
+
+     Closure types are an exception: all closures are named [closure] (up to
+     their disambiguator), so we keep the enclosing function (and enclosing
+     closures). Otherwise, e.g., items monomorphized with closures from
+     different functions would get the same name. *)
+  let is_closure (e : pattern_elem) : bool =
+    match e with
+    | PIdent ("closure", _, _) -> true
+    | _ -> false
+  in
   let rec simplify_name (id : pattern) =
     let shorten (id : pattern) =
       match id with
@@ -96,7 +106,17 @@ let pattern_to_extract_name_visitor =
       when Collections.StringSet.mem id literal_type_nameset ->
         (* Literals: we want to capitalize the first letter *)
         [ PIdent (StringUtils.capitalize_first_letter id, 0, []) ]
-    | _ -> shorten id
+    | _ -> (
+        match List.rev id with
+        | last :: _ when is_closure last ->
+            let rec keep_parents acc rev_id =
+              match rev_id with
+              | e :: rest when is_closure e -> keep_parents (e :: acc) rest
+              | (PIdent _ as e) :: _ -> e :: acc
+              | _ -> acc
+            in
+            keep_parents [] (List.rev id)
+        | _ -> shorten id)
   in
 
   object
