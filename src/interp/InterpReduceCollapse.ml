@@ -41,9 +41,51 @@ let eliminate_shared_loans (span : Meta.span) (ctx : eval_ctx) : eval_ctx =
         else super#visit_ASharedLoan env pm bid sv child
     end
   in
+  (* Compute the symbolic values which appear in the context elsewhere than as
+     the projected value of a loans projector in a region abstraction (in
+     values, borrow projectors, abstraction continuations, etc.) *)
+  let live_sids = ref SymbolicValueId.Set.empty in
+  let collect_sids =
+    object
+      inherit [_] iter_eval_ctx as super
+
+      method! visit_symbolic_value_id _ id =
+        live_sids := SymbolicValueId.Set.add id !live_sids
+
+      method! visit_AProjLoans env (proj : aproj_loans) =
+        (* Don't register the projected symbolic value *)
+        List.iter (fun (_, child) -> super#visit_aproj env child) proj.consumed;
+        List.iter (fun (_, child) -> super#visit_aproj env child) proj.borrows
+    end
+  in
+  collect_sids#visit_eval_ctx () ctx;
+  (* A loans projector over a symbolic value which doesn't appear anywhere else
+     in the context has no outstanding borrows: if it only projects shared
+     borrows, ending it gives back nothing and we can simply remove it (exactly
+     like a shared loan without borrows). This happens for instance with the
+     loans projectors of the static region over values which have been
+     dropped, while the abstraction owning the static region can't be ended. *)
+  let is_useless_loans_proj (abs : abs) (av : tavalue) : bool =
+    match av.value with
+    | ASymbolic (_, AProjLoans { proj; consumed = []; borrows = [] }) ->
+        (not (SymbolicValueId.Set.mem proj.sv_id !live_sids))
+        && not
+             (ty_has_mut_borrow_for_region_in_set ctx.type_ctx.type_infos
+                abs.regions.owned proj.proj_ty)
+    | _ -> false
+  in
   let update_abs (abs : abs) : abs =
     (* Only update the non-frozen abstractions *)
-    if abs.can_end then update_loans#visit_abs () abs else abs
+    if abs.can_end then
+      let abs = update_loans#visit_abs () abs in
+      {
+        abs with
+        avalues =
+          List.filter
+            (fun av -> not (is_useless_loans_proj abs av))
+            abs.avalues;
+      }
+    else abs
   in
   let ctx = ctx_map_abs update_abs ctx in
 

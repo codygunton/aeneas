@@ -2157,8 +2157,16 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
            meaning we can't read x any more (but we can write to x).
         *)
         ([], v)
+    | VBorrow (VSharedBorrow _) ->
+        (* Shared borrows inside a shared value (nested borrows below a shared
+           borrow, for instance the static borrows hidden in an ADT once the
+           symbolic value containing them has been expanded): like the
+           symbolic values whose types contain shared borrows (see below),
+           they belong to the frozen shared value, not to the abstraction, and
+           there is nothing to decompose. *)
+        ([], v)
     | VBorrow _ ->
-        (* We don't support nested borrows for now *)
+        (* We don't support nested mutable borrows for now *)
         [%craise] span "Unreachable"
     | VLoan lc -> (
         match lc with
@@ -2174,8 +2182,10 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
                 "Nested borrows are not supported yet";
               let av : tavalue =
                 [%sanity_check] span
-                  (not (value_has_loans_or_borrows (Some span) ctx sv.value));
-                (* We introduce fresh ids for the symbolic values *)
+                  (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv));
+                (* We introduce fresh ids for the symbolic values, and for the
+                   shared borrows it may contain (they become fresh instances of
+                   the same loans, as when copying a shared value) *)
                 let mk_value_with_fresh_sids (v : tvalue) : tvalue =
                   let visitor =
                     object
@@ -2183,6 +2193,9 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
 
                       method! visit_symbolic_value_id _ _ =
                         ctx.fresh_symbolic_value_id ()
+
+                      method! visit_shared_borrow_id _ _ =
+                        ctx.fresh_shared_borrow_id ()
                     end
                   in
                   visitor#visit_tvalue () v
