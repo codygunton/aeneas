@@ -1,0 +1,2 @@
+charon-args=--include clifv_or_pattern_ref_bindings_dep --code-duplication-limit 2
+[!lean] skip

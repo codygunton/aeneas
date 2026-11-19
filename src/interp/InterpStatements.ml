@@ -578,8 +578,11 @@ let eval_function_call_symbolic_inst (span : Meta.span) (func : fn_ptr)
 (** Helper: introduce a fresh symbolic value for a global.
 
     We return the value as well as its type with regions. Note that we currently
-    only support globals whose (instantiated) type doesn't contain regions,
-    except for static shared references. *)
+    only support globals whose (instantiated) type doesn't contain regions
+    other than the static region (for instance [[&'static str; N]]): the
+    symbolic value keeps the static regions of its type, and the loans of its
+    static borrows are projected in a region abstraction owning the static
+    region. *)
 let eval_global_as_fresh_symbolic_value (span : Meta.span)
     (gref : global_decl_ref) (ctx : eval_ctx) :
     eval_ctx * tvalue * rty * (SA.expr -> SA.expr) =
@@ -594,14 +597,14 @@ let eval_global_as_fresh_symbolic_value (span : Meta.span)
         [%add_loc] Subst.make_subst_from_generics (Some span) global.generics
           generics Self
       in
-      let ty = Subst.erase_regions_substitute_types subst global.ty in
+      let ty = Charon.Substitute.erase_regions_substitute_types subst global.ty in
       (* Decompose *)
       let inner_ty =
         match ty with
         | TRef (_, ty, RShared) -> ty
         | _ -> [%internal_error] span
       in
-      [%cassert] span (ty_no_regions inner_ty) "Unimplemented";
+      [%cassert] span (ty_only_static_regions inner_ty) "Unimplemented";
       (* We introduce a borrow whose corresponding loan is in a region
          abstraction owning the static region, allowing the borrow to live as
          long as needed. *)
@@ -613,15 +616,15 @@ let eval_global_as_fresh_symbolic_value (span : Meta.span)
       let cc = S.synthesize_global_eval gref sval in
       (ctx, borrow, TRef (RStatic, inner_ty, RShared), cc)
   | _ ->
-      [%cassert] span (ty_no_regions global.ty) "Unimplemented";
+      [%cassert] span (ty_only_static_regions global.ty) "Unimplemented";
       (* Instantiate the type  *)
       let generics = Subst.generic_args_erase_regions generics in
       let subst =
         [%add_loc] Subst.make_subst_from_generics (Some span) global.generics
           generics Self
       in
-      let ty = Subst.erase_regions_substitute_types subst global.ty in
-      [%cassert] span (ty_no_regions ty) "Unimplemented";
+      let ty = Charon.Substitute.erase_regions_substitute_types subst global.ty in
+      [%cassert] span (ty_only_static_regions ty) "Unimplemented";
       let sval = mk_fresh_symbolic_value span ctx ty in
       (* The value may contain static borrows (hidden in ADTs, for instance
          [struct S(&'static u8)]): we need to project their loans *)
@@ -634,7 +637,7 @@ let eval_global_as_fresh_symbolic_value (span : Meta.span)
             let value = VLiteral (constant_expr_as_literal global.value) in
             fun e ->
               SymbolicAst.IntroSymbolic
-                (ctx, None, sval, VaSingleValue { value; ty }, e)
+                (ctx, None, sval, VaSingleValue { value; ty = Subst.erase_regions ty }, e)
       in
       (ctx, mk_tvalue_from_symbolic_value sval, ty, cc)
 
@@ -814,7 +817,16 @@ and eval_statement_raw (config : config) (st : statement) : stl_cm_fun =
         ([ (ctx, Panic) ], cf_singleton __FILE__ __LINE__ st.span)
       else ([], cf_empty __FILE__ __LINE__ st.span SA.Panic)
   | Return -> ([ (ctx, Return) ], cf_singleton __FILE__ __LINE__ st.span)
-  | UnwindResume -> [%craise] st.span "unwinding is not supported by Aeneas"
+  | UnwindResume ->
+      (* The cleanup blocks resuming the unwinding are only reachable through
+         unwinding edges, which we erase (calls which panic fail): this
+         statement is unreachable at runtime. The symbolic execution may still
+         reach it on infeasible paths, as when it dispatches on a flag whose
+         possible values were lost by a join (see [join_block_escapes]):
+         we synthesize a [panic] node there, as for [UndefinedBehavior]. *)
+      if config.mode = ConcreteMode then
+        [%craise] st.span "unwinding is not supported by Aeneas"
+      else ([], cf_empty __FILE__ __LINE__ st.span SA.Panic)
   | Break i -> ([ (ctx, Break i) ], cf_singleton __FILE__ __LINE__ st.span)
   | Continue i -> ([ (ctx, Continue i) ], cf_singleton __FILE__ __LINE__ st.span)
   | StorageLive _ | Nop ->

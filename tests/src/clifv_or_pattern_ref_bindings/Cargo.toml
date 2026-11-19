@@ -1,0 +1,13 @@
+[package]
+name = "clifv_or_pattern_ref_bindings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "clifv_or_pattern_ref_bindings"
+path = "src/lib.rs"
+
+[dependencies]
+clifv_or_pattern_ref_bindings_dep = { path = "dep" }
+
+[workspace]
