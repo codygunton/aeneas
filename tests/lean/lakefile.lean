@@ -33,15 +33,19 @@ package «tests» {}
 @[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvJoinInnerLoop
+@[default_target] lean_lib ClifvJoinScalarInit
 @[default_target] lean_lib ClifvLoopEarlyReturn
 @[default_target] lean_lib ClifvLoopOuterBreak
 @[default_target] lean_lib ClifvLoopOuterContinue
+@[default_target] lean_lib ClifvMaybeFromU64
 @[default_target] lean_lib ClifvMonoGenerics
 @[default_target] lean_lib ClifvMonoLocal
 @[default_target] lean_lib ClifvMonoRefs
 @[default_target] lean_lib ClifvMonoStd
+@[default_target] lean_lib ClifvMoveAfterBorrowedResult
 @[default_target] lean_lib ClifvNestedBorrowCtx
 @[default_target] lean_lib ClifvNestedLoopReturn
+@[default_target] lean_lib ClifvSlicePatterns
 @[default_target] lean_lib ClifvStaticSharedBorrows
 @[default_target] lean_lib ClifvStdAllocCollections
 @[default_target] lean_lib ClifvStdAllocHash
@@ -54,6 +58,7 @@ package «tests» {}
 @[default_target] lean_lib ClifvStdSlice
 @[default_target] lean_lib ClifvTraitMethodSigFailure
 @[default_target] lean_lib ClifvTupleName
+@[default_target] lean_lib ClifvVecMacro
 @[default_target] lean_lib Closures
 @[default_target] lean_lib Constants
 @[default_target] lean_lib ConstantsLean

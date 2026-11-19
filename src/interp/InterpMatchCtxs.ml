@@ -1508,6 +1508,13 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
   let match_shared_loan_with_other (match_rec : tvalue_matcher)
       (ctx0 : eval_ctx) (_ctx1 : eval_ctx) ~(loan_is_left : bool) (ty : ety)
       (lid : loan_id) (shared_value : tvalue) (other : tvalue) : tvalue =
+    (* A value which is uninitialized in the other context is uninitialized
+       after the join: we end the loan (like [match_bottom_with_other] does
+       for the loans inside the value), and the retried join then matches
+       the value with [Bottom]. *)
+    if other.value = VBottom then
+      raise
+        (ValueMatchFailure (if loan_is_left then LoanInLeft lid else LoanInRight lid));
     (* Sanity checks *)
     [%cassert_recover] S.recover span
       (not (ety_has_nested_borrows (Some span) ctx0.type_ctx.type_infos ty))
@@ -1588,6 +1595,10 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
   let match_mut_loan_with_other (_match_rec : tvalue_matcher) (ctx0 : eval_ctx)
       (ctx1 : eval_ctx) ~(loan_is_left : bool) (ty : ety) (lid : loan_id)
       (other : tvalue) : tvalue =
+    (* See [match_shared_loan_with_other] *)
+    if other.value = VBottom then
+      raise
+        (ValueMatchFailure (if loan_is_left then LoanInLeft lid else LoanInRight lid));
     (* Sanity checks *)
     [%cassert_recover] S.recover span
       (not (ety_has_nested_borrows (Some span) ctx0.type_ctx.type_infos ty))
