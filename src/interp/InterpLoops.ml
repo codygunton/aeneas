@@ -131,8 +131,9 @@ let eval_loop_symbolic_apply_loop (config : config) (span : span)
     statement in the loop). In case no break information is provided as input,
     we output the (ordered) fresh abs ids and symbolic value ids that we find in
     the context at the break. *)
-let eval_loop_symbolic_synthesize_loop_body (config : config) (span : span)
-    (eval_loop_body : stl_cm_fun) (loop_id : LoopId.id) (fp_ctx : eval_ctx)
+let eval_loop_symbolic_synthesize_loop_body ?evaluated (config : config)
+    (span : span) (eval_loop_body : stl_cm_fun) (loop_id : LoopId.id)
+    (fp_ctx : eval_ctx)
     (fp_input_abs : AbsId.id list) (fp_input_svalues : SymbolicValueId.id list)
     (fixed_aids : AbsId.Set.t) (fixed_dids : DummyVarId.Set.t)
     (break_info : (eval_ctx * AbsId.id list * SymbolicValueId.id list) option) :
@@ -143,8 +144,14 @@ let eval_loop_symbolic_synthesize_loop_body (config : config) (span : span)
      compute pretty names at extraction time *)
   let cc = SynthesizeSymbolic.save_snapshot fp_ctx in
 
-  (* First, evaluate the loop body starting from the **fixed-point** context *)
-  let ctx_resl, cf_loop = comp cc (eval_loop_body fp_ctx) in
+  (* First, evaluate the loop body starting from the **fixed-point** context
+     (unless the caller already did) *)
+  let ctx_resl, cf_loop =
+    comp cc
+      (match evaluated with
+      | Some evaluated -> evaluated
+      | None -> eval_loop_body fp_ctx)
+  in
 
   (* Small helpers *)
   let reorder_input_abs (map : abs AbsId.Map.t) (absl : abs_id list) : abs list
@@ -341,7 +348,7 @@ let eval_loop_symbolic_synthesize_loop_body (config : config) (span : span)
   (break_info, cf_loop el)
 
 (** Evaluate a loop in symbolic mode *)
-let eval_loop_symbolic (config : config) (span : span)
+let eval_loop_symbolic ~(no_continue : bool) (config : config) (span : span)
     (eval_loop_body : stl_cm_fun) : st_cm_fun =
  fun ctx ->
   (* Debug *)
@@ -352,7 +359,8 @@ let eval_loop_symbolic (config : config) (span : span)
 
   (* Compute the fixed point at the loop entrance *)
   let fp_ctx, fixed_ids =
-    compute_loop_entry_fixed_point config span loop_id eval_loop_body ctx
+    compute_loop_entry_fixed_point ~no_continue config span loop_id
+      eval_loop_body ctx
   in
   let input_abs_list =
     List.rev
@@ -375,9 +383,18 @@ let eval_loop_symbolic (config : config) (span : span)
   (* Compute the context at the breaks *)
   let fixed_aids = InterpJoinCore.compute_fixed_abs_ids ctx fp_ctx in
   let fixed_dids = ctx_get_dummy_var_ids ctx in
+  (* A loop whose body never continues is evaluated only once from the fixed
+     point (which is its entry context), for both the break context and the
+     synthesis: with several evaluations per loop, the cost of nested loops is
+     exponential in their depth (control-flow reconstruction without code
+     duplication nests one such loop per join point). *)
+  let evaluated =
+    if no_continue then Some (eval_loop_body fp_ctx) else None
+  in
   let break_info =
-    compute_loop_break_context config span loop_id eval_loop_body fp_ctx
-      fixed_aids fixed_dids
+    compute_loop_break_context
+      ?evaluated:(Option.map fst evaluated)
+      config span loop_id eval_loop_body fp_ctx fixed_aids fixed_dids
   in
   (* Debug *)
   [%ltrace
@@ -447,9 +464,9 @@ let eval_loop_symbolic (config : config) (span : span)
   let break_info', loop_body =
     let fixed_aids = InterpJoinCore.compute_fixed_abs_ids ctx fp_ctx in
     let fixed_dids = ctx_get_dummy_var_ids ctx in
-    eval_loop_symbolic_synthesize_loop_body config span eval_loop_body loop_id
-      fp_ctx input_abs_ids_list fp_input_svalue_ids fixed_aids fixed_dids
-      break_info
+    eval_loop_symbolic_synthesize_loop_body ?evaluated config span
+      eval_loop_body loop_id fp_ctx input_abs_ids_list fp_input_svalue_ids
+      fixed_aids fixed_dids break_info
   in
 
   let break_ctx, break_abs, break_input_svalues =
@@ -504,8 +521,8 @@ let eval_loop_symbolic (config : config) (span : span)
   in
   ((break_ctx, Unit), cc)
 
-let eval_loop (config : config) (span : span) (eval_loop_body : stl_cm_fun) :
-    stl_cm_fun =
+let eval_loop ?(no_continue = false) (config : config) (span : span)
+    (eval_loop_body : stl_cm_fun) : stl_cm_fun =
  fun ctx ->
   match config.mode with
   | ConcreteMode -> (eval_loop_concrete span eval_loop_body) ctx
@@ -540,7 +557,7 @@ let eval_loop (config : config) (span : span) (eval_loop_body : stl_cm_fun) :
              ~with_abs_conts:true ctx)
       in
       let (ctx, res), cc =
-        comp cc (eval_loop_symbolic config span eval_loop_body ctx)
+        comp cc (eval_loop_symbolic ~no_continue config span eval_loop_body ctx)
       in
       let cf (el : SymbolicAst.expr list) : SymbolicAst.expr =
         match el with

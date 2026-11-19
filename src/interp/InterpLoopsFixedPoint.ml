@@ -41,9 +41,9 @@ let loop_abs_reorder_and_add_info (span : Meta.span) (fixed_ids : ids_sets)
   fp
 
 (* TODO: remove the output ids_sets *)
-let compute_loop_entry_fixed_point (config : config) (span : Meta.span)
-    (loop_id : LoopId.id) (eval_loop_body : stl_cm_fun) (ctx0 : eval_ctx) :
-    eval_ctx * ids_sets =
+let compute_loop_entry_fixed_point ?(no_continue = false) (config : config)
+    (span : Meta.span) (loop_id : LoopId.id) (eval_loop_body : stl_cm_fun)
+    (ctx0 : eval_ctx) : eval_ctx * ids_sets =
   (* Introduce "reborrows" for the shared values in the abstractions, so that
      the shared values in the fixed abstractions never get modified (technically,
      they are immutable, but in practice we can introduce more shared loans, or
@@ -159,8 +159,11 @@ let compute_loop_entry_fixed_point (config : config) (span : Meta.span)
         ("Could not compute a loop fixed point in " ^ string_of_int i0
        ^ " iterations"))
     else
-      (* Evaluate the loop body to register the different contexts upon reentry *)
-      let ctx_resl, _ = eval_loop_body ctx in
+      (* Evaluate the loop body to register the different contexts upon reentry.
+         A loop whose body never continues has no such context: we don't need to
+         evaluate it (evaluating it would make the cost of nested loops
+         exponential in their depth). *)
+      let ctx_resl = if no_continue then [] else fst (eval_loop_body ctx) in
       (* Keep only the contexts which reached a `continue`. *)
       let keep_continue_ctx (ctx, res) =
         [%ltrace "register_continue_ctx"];
@@ -243,16 +246,18 @@ type break_ctx =
       *)
   | Multiple of (eval_ctx * abs list)  (** We joined multiple break contexts *)
 
-let compute_loop_break_context (config : config) (span : Meta.span)
-    (loop_id : LoopId.id) (eval_loop_body : stl_cm_fun) (fp_ctx : eval_ctx)
-    (fixed_aids : AbsId.Set.t) (fixed_dids : DummyVarId.Set.t) : break_ctx =
+let compute_loop_break_context
+    ?(evaluated : (eval_ctx * statement_eval_res) list option) (config : config)
+    (span : Meta.span) (loop_id : LoopId.id) (eval_loop_body : stl_cm_fun)
+    (fp_ctx : eval_ctx) (fixed_aids : AbsId.Set.t)
+    (fixed_dids : DummyVarId.Set.t) : break_ctx =
   [%ltrace
     "Initial fixed-point context:\n"
     ^ eval_ctx_to_string ~span:(Some span) ~filter:false fp_ctx];
 
   (* Update the fixed-point context to remove the continuation expressions from
      the abstractions introduced by the fixed-point *)
-  let fp_ctx =
+  let remove_conts (ctx : eval_ctx) : eval_ctx =
     let update (e : env_elem) : env_elem =
       match (e : env_elem) with
       | EAbs abs -> (
@@ -264,8 +269,9 @@ let compute_loop_break_context (config : config) (span : Meta.span)
           | _ -> e)
       | EBinding _ | EFrame -> e
     in
-    { fp_ctx with env = List.map update fp_ctx.env }
+    { ctx with env = List.map update ctx.env }
   in
+  let fp_ctx = remove_conts fp_ctx in
 
   (* Within one evaluation, break paths may fork after creating a loan and thus
      share its IDs (e.g., both contain [ML@8]/[MB@8]). This can lead to issues
@@ -275,8 +281,15 @@ let compute_loop_break_context (config : config) (span : Meta.span)
      the body once to refresh the ids: joining all the resulting break contexts
      then introduces all the necessary abstractions. *)
   let eval_break_ctxs () =
-    (* Evaluate the loop body to register the different contexts at a break. *)
-    let ctx_resl, _ = eval_loop_body fp_ctx in
+    (* Evaluate the loop body to register the different contexts at a break.
+       If the caller already evaluated it (from the fixed point with the
+       continuation expressions), we reuse that evaluation. *)
+    let ctx_resl =
+      match evaluated with
+      | Some ctx_resl ->
+          List.map (fun (ctx, res) -> (remove_conts ctx, res)) ctx_resl
+      | None -> fst (eval_loop_body fp_ctx)
+    in
     let keep_break_ctx (ctx, res) : eval_ctx option =
       [%ltrace "register_break_ctx"];
       match res with
@@ -313,8 +326,14 @@ let compute_loop_break_context (config : config) (span : Meta.span)
       Single
   | ctxs ->
       (* Evaluate a second time so that the same break paths contain fresh IDs,
-         then join all the contexts as before. *)
-      let ctxs = ctxs @ eval_break_ctxs () in
+         then join all the contexts as before. When reusing an evaluation which
+         is also used to synthesize the loop body, the break contexts we match
+         against the join are exactly these ones: no refresh is needed. *)
+      let ctxs =
+        match evaluated with
+        | Some _ -> ctxs
+        | None -> ctxs @ eval_break_ctxs ()
+      in
       (* Join the contexts *)
       let break_ctx =
         loop_join_break_ctxs config span loop_id fixed_aids fixed_dids ctxs

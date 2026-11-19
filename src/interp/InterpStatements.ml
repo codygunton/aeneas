@@ -798,7 +798,23 @@ and eval_statement_raw (config : config) (st : statement) : stl_cm_fun =
       ([ (ctx, Unit) ], cf_singleton __FILE__ __LINE__ st.span)
   | Loop loop_body ->
       let eval_loop_body = eval_block config loop_body in
-      InterpLoops.eval_loop config st.span eval_loop_body ctx
+      (* Does the body continue to this loop (not counting the nested loops)? *)
+      let no_continue =
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+            method! visit_Loop depth b = super#visit_Loop (depth + 1) b
+
+            method! visit_Continue depth i =
+              if i = depth then raise Utils.Found
+          end
+        in
+        try
+          visitor#visit_block 0 loop_body;
+          true
+        with Utils.Found -> false
+      in
+      InterpLoops.eval_loop ~no_continue config st.span eval_loop_body ctx
   | Switch (data, branches) -> eval_switch config st.span data branches ctx
   | _ ->
       [%craise] st.span ("unsupported statement: " ^ show_statement_kind st.kind)

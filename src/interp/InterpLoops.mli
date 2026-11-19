@@ -64,4 +64,9 @@ open Meta
 
     The `stl_cm_fun` required as input must be the function to evaluate the loop
     body (i.e., `eval_statement` applied to the loop body). *)
-val eval_loop : config -> span -> stl_cm_fun -> stl_cm_fun
+val eval_loop :
+  ?no_continue:bool -> config -> span -> stl_cm_fun -> stl_cm_fun
+(** [no_continue]: the loop body never continues to this loop (it is a block
+    which is only exited by [break]s, as produced by the control-flow
+    reconstruction without code duplication). Its body is then evaluated only
+    once. *)

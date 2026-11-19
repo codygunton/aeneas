@@ -17,6 +17,7 @@ open InterpUtils
     the future, we might want to do something more precise, by listing only the
     values which are read or modified (some symbolic values may be ignored). *)
 val compute_loop_entry_fixed_point :
+  ?no_continue:bool ->
   config ->
   Meta.span ->
   loop_id ->
@@ -35,6 +36,7 @@ type break_ctx =
   | Multiple of (eval_ctx * abs list)  (** We joined multiple break contexts *)
 
 val compute_loop_break_context :
+  ?evaluated:(eval_ctx * Cps.statement_eval_res) list ->
   config ->
   Meta.span ->
   LoopId.id ->
