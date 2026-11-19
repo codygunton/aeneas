@@ -602,6 +602,36 @@ let loop_continues (loop_body : block) : bool =
     false
   with Utils.Found -> true
 
+(** Split the [StorageDead]s right before an escape off [acc] (the statements
+    preceding the escape, in reverse order): returns the remaining statements
+    (in reverse order) and the [StorageDead]s (in order).
+
+    Those [StorageDead]s end the scopes the escape leaves. Once the escape is
+    rewritten to go through the exit of a loop or a join flag (see
+    [lower_loop_exits] and [join_block_escapes]), they would make those locals
+    uninitialized in the context joined at the exit, while the other paths
+    still use them: the join loses their values (or must abstract the borrows
+    they contain). We remove them: the dispatch after the exit leaves those
+    scopes (for a [continue], it executes them, see [lower_loop_exits]), and a
+    [StorageDead] has no effect on the execution besides ending the borrows of
+    the local (the symbolic execution checks that keeping them alive longer is
+    valid). The drops interleaved with them (as the drop of a local right before
+    its [StorageDead]) are skipped, as long as drops are no-ops
+    ([Config.drop_as_no_op]): their position doesn't matter. *)
+let rec split_storage_dead_before_escape (acc : statement list) :
+    statement list * statement list =
+  match acc with
+  | ({ kind = StorageDead _; _ } as st) :: acc ->
+      let acc, sds = split_storage_dead_before_escape acc in
+      (acc, sds @ [ st ])
+  | ({ kind = Drop _; _ } as st) :: acc when !Config.drop_as_no_op ->
+      let acc, sds = split_storage_dead_before_escape acc in
+      (st :: acc, sds)
+  | _ -> (acc, [])
+
+let drop_storage_dead_before_escape (acc : statement list) : statement list =
+  fst (split_storage_dead_before_escape acc)
+
 let return_carrier_name = "return_carrier"
 
 let ret_place0 (body : expr_body) : place =
@@ -811,8 +841,22 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
          outside of nested loops (which are already lowered). [returns]:
          whether to lower the early returns. *)
       let rewrite_escapes ~(returns : bool) ?(carried : place option)
-          (exit : place) (b : block) : block * int list =
+          (exit : place) (b : block) :
+          block * int list * (int * statement list) list =
         let codes = ref [] in
+        (* The [StorageDead]s removed before the [continue]s to outer loops, per
+           exit code (see [split_storage_dead_before_escape]) *)
+        let continue_sds = ref [] in
+        let record_continue_sds (k : int) (sds : statement list) : unit =
+          let prev = Option.value ~default:[] (List.assoc_opt k !continue_sds) in
+          let fresh =
+            List.filter
+              (fun (st : statement) ->
+                not (List.exists (fun (st' : statement) -> st'.kind = st.kind) prev))
+              sds
+          in
+          continue_sds := (k, prev @ fresh) :: List.remove_assoc k !continue_sds
+        in
         let escape span (k : int) : statement list =
           if not (List.mem k !codes) then codes := k :: !codes;
           let carry =
@@ -833,40 +877,40 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
           | Break d | Continue d -> d >= 1
           | _ -> false
         in
-        (* The [StorageDead]s right before an escape end the scopes the escape
-           leaves. Once the escape goes through the exit of the loop, they would
-           make those locals uninitialized in the context joined at the exit
-           while the other exits still use them: we remove them (the dispatch
-           after the loop leaves those scopes). *)
-        let rec drop_storage_dead (acc : statement list) =
-          match acc with
-          | { kind = StorageDead _; _ } :: acc -> drop_storage_dead acc
-          | _ -> acc
-        in
         let rec block (b : block) : block =
           let statements =
             List.fold_left
               (fun acc st ->
-                let acc = if is_escape st then drop_storage_dead acc else acc in
-                List.rev_append (stmt st) acc)
+                let acc, sds =
+                  if is_escape st then split_storage_dead_before_escape acc
+                  else (acc, [])
+                in
+                List.rev_append (stmt ~sds st) acc)
               [] b.statements
           in
           { b with statements = List.rev statements }
-        and stmt (st : statement) : statement list =
+        and stmt ?(sds : statement list = []) (st : statement) : statement list =
           match st.kind with
           | Return when returns -> escape st.span 1
           | Break d when d >= 1 -> escape st.span (2 * d)
-          | Continue d when d >= 1 -> escape st.span ((2 * d) + 1)
+          | Continue d when d >= 1 ->
+              let k = (2 * d) + 1 in
+              record_continue_sds k sds;
+              escape st.span k
           | Switch (data, branches) ->
               [ { st with kind = Switch (data, List.map block branches) } ]
           | _ -> [ st ]
         in
         let b = block b in
-        (b, List.sort compare !codes)
+        (b, List.sort compare !codes, !continue_sds)
       in
-      (* The dispatch after a lowered loop *)
+      (* The dispatch after a lowered loop. The [continue]s to outer loops first
+         end the scopes they leave ([continue_sds]): the context at a
+         [continue] must be joinable with the context at the entry of the loop,
+         where the locals of the loop body are uninitialized. *)
       let dispatch span (exit : place) ?(carried : place option)
-          (codes : int list) : statement =
+          ~(continue_sds : (int * statement list) list) (codes : int list) :
+          statement =
         let target (k : int) : statement list =
           if k = 1 then
             match carried with
@@ -877,7 +921,9 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
                   [ mk_statement span Return ]
             | None -> [ mk_statement span Return ]
           else if k mod 2 = 0 then [ mk_statement span (Break ((k / 2) - 1)) ]
-          else [ mk_statement span (Continue ((k / 2) - 1)) ]
+          else
+            Option.value ~default:[] (List.assoc_opt k continue_sds)
+            @ [ mk_statement span (Continue ((k / 2) - 1)) ]
         in
         let data : switch_data =
           {
@@ -945,7 +991,7 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
             in
             (* Only allocate the locals if the loop has exits to lower *)
             let scan = { kind = PlaceLocal LocalId.zero; ty = u32_ty } in
-            let _, codes = rewrite_escapes ~returns scan loop_body in
+            let _, codes, _ = rewrite_escapes ~returns scan loop_body in
             if codes = [] then [ { st with kind = Loop loop_body } ]
             else
               let span = st.span in
@@ -957,14 +1003,14 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
                     (Some p, [ mk_statement span (Assign (p, carrier_init c)) ])
                 | _ -> (None, [])
               in
-              let loop_body, codes =
+              let loop_body, codes, continue_sds =
                 rewrite_escapes ~returns ?carried exit loop_body
               in
               init
               @ [
                   set_exit span exit 0;
                   { st with kind = Loop loop_body };
-                  dispatch span exit ?carried codes;
+                  dispatch span exit ?carried ~continue_sds codes;
                 ]
         | Switch (data, branches) ->
             [
@@ -1134,12 +1180,8 @@ let join_block_escapes (_ : crate) (f : fun_decl) : fun_decl =
           if not (List.mem k !codes) then codes := k :: !codes;
           set span flag k
         in
-        (* See [lower_loop_exits] *)
-        let rec drop_storage_dead (acc : statement list) =
-          match acc with
-          | { kind = StorageDead _; _ } :: acc -> drop_storage_dead acc
-          | _ -> acc
-        in
+        (* See [drop_storage_dead_before_escape] *)
+        let drop_storage_dead = drop_storage_dead_before_escape in
         let rec block (b : block) : block =
           (* [acc]: the rewritten statements, in reverse order *)
           let rec go (acc : statement list) (stl : statement list) :

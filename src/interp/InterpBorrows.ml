@@ -2102,35 +2102,52 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
                we have to end them all and remove the abstraction from the context)
             *)
             [%craise] span "Unreachable")
-    | ASymbolic (_, aproj) -> (
-        (* *)
+    | ASymbolic (pm, aproj) -> (
+        (* The children of a projector are the projectors over the values given
+           back to it, introduced when an ancestor region of the projected type
+           ended (nested borrows). When the regions of the abstraction only
+           appear below shared borrows in the projected type, we flatten them
+           into the abstraction (see [shared_only_in]): a projector over a
+           symbolic value has the same meaning wherever it is in the
+           abstraction, and the projectors of shared borrows give back nothing
+           (no value is consumed). *)
+        let children (l : (mconsumed_symb * aproj) list) : unit =
+          if l <> [] then (
+            [%cassert] span (shared_only_in ty)
+              "Nested borrows are not supported yet";
+            List.iter
+              (fun ((c : mconsumed_symb), (child : aproj)) ->
+                let ty =
+                  match child with
+                  | AProjLoans { proj; _ } | AProjBorrows { proj; _ } ->
+                      proj.proj_ty
+                  | _ -> c.proj_ty
+                in
+                list_avalues allow_borrows push
+                  { value = ASymbolic (pm, child); ty })
+              l)
+        in
         match aproj with
-        | AProjLoans { proj = _; consumed; borrows } ->
-            (* There can be children in the presence of nested borrows: we
-               don't handle those for now. *)
+        | AProjLoans { proj; consumed; borrows } ->
             [%sanity_check] span (consumed = []);
-            [%sanity_check] span (borrows = []);
-            push av
-        | AProjBorrows { proj = _; loans } ->
+            children borrows;
+            push
+              {
+                av with
+                value = ASymbolic (pm, AProjLoans { proj; consumed; borrows = [] });
+              }
+        | AProjBorrows { proj; loans } ->
             (* For now, we fore all symbolic values containing borrows to be eagerly
                expanded *)
-            (* There can be children in the presence of nested borrows: we
-               don't handle those for now. *)
-            [%sanity_check] span (loans = []);
-            push av
+            children loans;
+            push { av with value = ASymbolic (pm, AProjBorrows { proj; loans = [] }) }
         | AEndedProjLoans { proj = _; consumed; borrows } ->
-            (* There can be children in the presence of nested borrows: we
-               don't handle those for now. *)
             [%sanity_check] span (consumed = []);
-            [%sanity_check] span (borrows = []);
-            (* Just ignore *)
-            ()
+            (* Ignore the ended projector *)
+            children borrows
         | AEndedProjBorrows { mvalues = _; loans } ->
-            (* There can be children in the presence of nested borrows: we
-               don't handle those for now. *)
-            [%sanity_check] span (loans = []);
-            (* Just ignore *)
-            ()
+            (* Ignore the ended projector *)
+            children loans
         | AEmpty -> ())
   (* Explore a value below an ignored or ended loan or borrow (see
      [shared_only_in]) *)
