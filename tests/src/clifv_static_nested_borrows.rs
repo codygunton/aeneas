@@ -1,5 +1,4 @@
 //@ [!lean] skip
-//@ [lean] known-failure
 #![feature(register_tool)]
 #![register_tool(verify)]
 // Static borrows hidden in ADTs, in the shape of Cranelift's

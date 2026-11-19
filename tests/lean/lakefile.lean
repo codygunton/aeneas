@@ -58,6 +58,7 @@ package «tests» {}
 @[default_target] lean_lib ClifvResultVariant
 @[default_target] lean_lib ClifvSlicePatterns
 @[default_target] lean_lib ClifvStaticSharedBorrows
+@[default_target] lean_lib ClifvStaticNestedBorrows
 @[default_target] lean_lib ClifvStaticNestedLoops
 @[default_target] lean_lib ClifvStdAllocCollections
 @[default_target] lean_lib ClifvStdAllocHash
