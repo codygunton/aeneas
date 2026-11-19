@@ -269,41 +269,46 @@ let analyze_module (m : crate) (funs_map : fun_decl FunDeclId.Map.t) :
     List.iter (fun (f : fun_decl) -> register_fun_decl_info f.def_id info) funs
   in
 
+  let analyze_funs (fun_ids : fun_decl_id list) : unit =
+    try analyze_fun_decl_group fun_ids
+    with exn when Errors.is_item_failure exn ->
+      let error = Errors.to_item_failure exn in
+      let fmt_env = Charon.Print.crate_to_fmt_env m in
+      let decl_id_to_string (id : FunDeclId.id) : string =
+        match FunDeclId.Map.find_opt id m.fun_decls with
+        | None -> show_fun_decl_id id
+        | Some d ->
+            Charon.Print.name_to_string fmt_env d.item_meta.name
+            ^ " ("
+            ^ span_to_string d.item_meta.span
+            ^ ")"
+      in
+      let decls = String.concat "\n" (List.map decl_id_to_string fun_ids) in
+      [%save_error_opt_span] error.span
+        ("Encountered an error when analyzing the following function \
+          declaration group:\n" ^ decls ^ "\n\nInitial error:\n" ^ error.msg)
+  in
+
   let rec analyze_decl_groups (decls : declaration_group list) : unit =
     match decls with
     | [] -> ()
     | (TypeGroup _ | TraitDeclGroup _ | TraitImplGroup _ | GlobalGroup _)
       :: decls' -> analyze_decl_groups decls'
     | FunGroup decl :: decls' ->
-        (try analyze_fun_decl_group (g_declaration_group_to_list decl)
-         with CFailure error ->
-           let fmt_env = Charon.Print.crate_to_fmt_env m in
-           let decls = Charon.GAstUtils.g_declaration_group_to_list decl in
-           let decl_id_to_string (id : FunDeclId.id) : string =
-             match FunDeclId.Map.find_opt id m.fun_decls with
-             | None -> show_fun_decl_id id
-             | Some d ->
-                 Charon.Print.name_to_string fmt_env d.item_meta.name
-                 ^ " ("
-                 ^ span_to_string d.item_meta.span
-                 ^ ")"
-           in
-           let decls = List.map decl_id_to_string decls in
-           let decls = String.concat "\n" decls in
-           [%save_error_opt_span] error.span
-             ("Encountered an error when analyzing the following function \
-               declaration group:\n" ^ decls ^ "\n\nInitial error:\n"
-            ^ error.msg));
+        analyze_funs (g_declaration_group_to_list decl);
         analyze_decl_groups decls'
-    | MixedGroup ids :: _ ->
-        [%save_error_opt_span] None
-          ("Mixed declaration groups (which contain both type and function \
-            declarations or functions and traits, for instance) are not \
-            supported yet: ["
-          ^ String.concat ", "
-              (List.map Charon.Print.item_id_to_string
-                 (Charon.GAstUtils.g_declaration_group_to_list ids))
-          ^ "]")
+    | MixedGroup ids :: decls' ->
+        (* The functions of a mixed group (mutually recursive with types or
+           traits) are analyzed together, as a recursive group of functions;
+           this must not stop the analysis of the following groups. *)
+        analyze_funs
+          (List.filter_map
+             (fun id ->
+               match id with
+               | Charon.Meta.IdFun id -> Some id
+               | _ -> None)
+             (Charon.GAstUtils.g_declaration_group_to_list ids));
+        analyze_decl_groups decls'
   in
 
   analyze_decl_groups (Option.get m.declarations);

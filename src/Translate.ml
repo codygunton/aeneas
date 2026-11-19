@@ -527,6 +527,26 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
   let pure_translations =
     let funs = FunDeclId.Map.values trans_ctx.fun_ctx.to_extract in
     (* Split between opaque and transparent *)
+    (* Debugging aid: with [AENEAS_ONLY=<substring>], only the bodies of the
+       functions whose name contains the substring are translated (the others
+       are made opaque). *)
+    let funs =
+      match Sys.getenv_opt "AENEAS_ONLY" with
+      | None -> funs
+      | Some s ->
+          let contains name =
+            let rec go i =
+              i + String.length s <= String.length name
+              && (String.sub name i (String.length s) = s || go (i + 1))
+            in
+            go 0
+          in
+          List.map
+            (fun (d : fun_decl) ->
+              if contains (name_to_string trans_ctx d.item_meta.name) then d
+              else { d with body = OpaqueBody })
+            funs
+    in
     let opaque, transparent =
       List.partition
         (fun (d : fun_decl) -> not (LlbcAstUtils.body_is_translatable d.body))

@@ -638,9 +638,22 @@ let eval_global_as_fresh_symbolic_value (span : Meta.span)
       in
       (ctx, mk_tvalue_from_symbolic_value sval, ty, cc)
 
+(** Statement evaluation counter for [AENEAS_MEMTRACE]: a trace line every 100k
+    statements, to tell path explosion apart from expensive operations *)
+let eval_statement_counter = ref 0
+
+let memtrace_enabled = lazy (Sys.getenv_opt "AENEAS_MEMTRACE" <> None)
+
 (** Evaluate a statement. *)
 let rec eval_statement (config : config) (st : statement) : stl_cm_fun =
  fun ctx ->
+  if Lazy.force memtrace_enabled then (
+    incr eval_statement_counter;
+    if !eval_statement_counter mod 100_000 = 0 then
+      Printf.eprintf "memtrace statements=%d heap=%dMiB at %s\n%!"
+        !eval_statement_counter
+        ((Gc.quick_stat ()).heap_words * (Sys.word_size / 8) / (1 lsl 20))
+        (Errors.raw_span_to_string st.span));
   (* Debugging *)
   [%ltrace
     "\n**About to evaluate statement** ("
@@ -934,11 +947,17 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
               | [ e_true; e_false ] -> cf_bool (e_true, e_false)
               | _ -> [%internal_error] span
             in
+            if (not join) && Lazy.force memtrace_enabled then
+              Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
+                (List.length ctx_resl) (Errors.raw_span_to_string span);
             if join then
               try eval_switch_with_join config span cc ctx0 ctx_resl
               with Errors.RFailure ->
                 (* If the join threw a recoverable error we do not join
                    and simply duplicate the code *)
+                if Sys.getenv_opt "AENEAS_MEMTRACE" <> None then
+                  prerr_endline
+                    ("memtrace join failed: " ^ Errors.raw_span_to_string span);
                 (ctx_resl, cc)
             else (ctx_resl, cc)
         | VLiteral (VScalar sv), TScalar (TInteger _ as int_ty) ->
@@ -991,12 +1010,18 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
               cf_int (el, e_otherwise)
             in
             let cf = cc_comp cc cf in
+            if (not join) && Lazy.force memtrace_enabled then
+              Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
+                (List.length resl) (Errors.raw_span_to_string span);
             if join then
               (* Join the contexts *)
               try eval_switch_with_join config span cf ctx0 resl
               with Errors.RFailure ->
                 (* If the join threw a recoverable error we do not join
                    and simply duplicate the code *)
+                if Sys.getenv_opt "AENEAS_MEMTRACE" <> None then
+                  prerr_endline
+                    ("memtrace join failed: " ^ Errors.raw_span_to_string span);
                 (resl, cf)
             else
               (* Do not join the contexts: compose the continuations and continue *)
@@ -1050,11 +1075,17 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
             in
             let ctx_resl, cf = comp_seqs __FILE__ __LINE__ span resl in
             let cc = cc_comp cf_expand cf in
+            if (not join) && Lazy.force memtrace_enabled then
+              Printf.eprintf "memtrace no join: %d contexts at %s\n%!"
+                (List.length ctx_resl) (Errors.raw_span_to_string span);
             if join then (* Join the contexts *)
               try eval_switch_with_join config span cc ctx0 ctx_resl
               with Errors.RFailure ->
                 (* If the join threw a recoverable error we do not join
                    and simply duplicate the code *)
+                if Sys.getenv_opt "AENEAS_MEMTRACE" <> None then
+                  prerr_endline
+                    ("memtrace join failed: " ^ Errors.raw_span_to_string span);
                 (ctx_resl, cc)
             else
               (* Compose the continuations *)

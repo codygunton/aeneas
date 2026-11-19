@@ -538,7 +538,20 @@ let apply_passes_to_pure_fun_translations (crate : LlbcAst.crate)
         (fun report ->
           Parallel.parallel_map
             (fun (rank, x) ->
-              let x = apply rank x in
+              let x =
+                try apply rank x
+                with exn when Errors.is_item_failure exn ->
+                  (* Keep the function, as an opaque declaration *)
+                  let error = Errors.to_item_failure exn in
+                  let name = name_to_string trans_ctx x.item_meta.name in
+                  [%warn_opt_span] error.span
+                    ("Could not apply the micro-passes to the function '"
+                   ^ name ^ "' because of previous error");
+                  Errors.record_item_failure ~kind:"fun" ~rust_name:name
+                    ~def_id:(FunDeclId.to_int x.def_id)
+                    { error with msg = "micro-passes: " ^ error.msg };
+                  apply rank { x with body = None }
+              in
               report 1;
               x)
             transl)

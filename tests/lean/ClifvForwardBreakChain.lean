@@ -25,7 +25,7 @@ namespace clifv_forward_break_chain
     Visibility: public -/
 @[rust_loop]
 def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
-  let (join_flag, join_return) ←
+  let (return_carrier, join_flag) ←
     match o with
     | none => ok (0#u32, 0#u32)
     | some a =>
@@ -34,102 +34,105 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
       if i = 0#u32
       then
         if a > 0#u32
-        then let join_return1 ← a + 0#u32
-             ok (3#u32, join_return1)
+        then let return_carrier1 ← a + 0#u32
+             ok (return_carrier1, 1#u32)
         else ok (0#u32, 0#u32)
       else ok (0#u32, 0#u32)
   match join_flag with
-  | 3#uscalar => ok join_return
+  | 1#uscalar => ok return_carrier
   | _ =>
     let o1 ← lift (U32.checked_sub x 1#u32)
-    let (join_flag1, join_return1) ←
+    let (return_carrier1, join_flag1) ←
       match o1 with
-      | none => ok (0#u32, 0#u32)
+      | none => ok (return_carrier, 0#u32)
       | some a =>
         do
         let i ← a % 3#u32
         if i = 0#u32
         then
           if a > 3#u32
-          then let join_return2 ← a + 1#u32
-               ok (3#u32, join_return2)
-          else ok (0#u32, 0#u32)
-        else ok (0#u32, 0#u32)
+          then let return_carrier2 ← a + 1#u32
+               ok (return_carrier2, 1#u32)
+          else ok (return_carrier, 0#u32)
+        else ok (return_carrier, 0#u32)
     match join_flag1 with
-    | 3#uscalar => ok join_return1
+    | 1#uscalar => ok return_carrier1
     | _ =>
       let o2 ← lift (U32.checked_sub x 2#u32)
-      let (join_flag2, join_return2) ←
+      let (return_carrier2, join_flag2) ←
         match o2 with
-        | none => ok (0#u32, 0#u32)
+        | none => ok (return_carrier1, 0#u32)
         | some a =>
           do
           let i ← a % 4#u32
           if i = 0#u32
           then
             if a > 6#u32
-            then let join_return3 ← a + 2#u32
-                 ok (3#u32, join_return3)
-            else ok (0#u32, 0#u32)
-          else ok (0#u32, 0#u32)
+            then let return_carrier3 ← a + 2#u32
+                 ok (return_carrier3, 1#u32)
+            else ok (return_carrier1, 0#u32)
+          else ok (return_carrier1, 0#u32)
       match join_flag2 with
-      | 3#uscalar => ok join_return2
+      | 1#uscalar => ok return_carrier2
       | _ =>
         let o3 ← lift (U32.checked_sub x 3#u32)
-        let (join_flag3, join_return3) ←
+        let (return_carrier3, join_flag3) ←
           match o3 with
-          | none => ok (0#u32, 0#u32)
+          | none => ok (return_carrier2, 0#u32)
           | some a =>
             do
             let i ← a % 5#u32
             if i = 0#u32
             then
               if a > 9#u32
-              then let join_return4 ← a + 3#u32
-                   ok (3#u32, join_return4)
-              else ok (0#u32, 0#u32)
-            else ok (0#u32, 0#u32)
+              then
+                let return_carrier4 ← a + 3#u32
+                ok (return_carrier4, 1#u32)
+              else ok (return_carrier2, 0#u32)
+            else ok (return_carrier2, 0#u32)
         match join_flag3 with
-        | 3#uscalar => ok join_return3
+        | 1#uscalar => ok return_carrier3
         | _ =>
           let o4 ← lift (U32.checked_sub x 4#u32)
-          let (join_flag4, join_return4) ←
+          let (return_carrier4, join_flag4) ←
             match o4 with
-            | none => ok (0#u32, 0#u32)
+            | none => ok (return_carrier3, 0#u32)
             | some a =>
               do
               let i ← a % 6#u32
               if i = 0#u32
               then
                 if a > 12#u32
-                then let join_return5 ← a + 4#u32
-                     ok (3#u32, join_return5)
-                else ok (0#u32, 0#u32)
-              else ok (0#u32, 0#u32)
+                then
+                  let return_carrier5 ← a + 4#u32
+                  ok (return_carrier5, 1#u32)
+                else ok (return_carrier3, 0#u32)
+              else ok (return_carrier3, 0#u32)
           match join_flag4 with
-          | 3#uscalar => ok join_return4
+          | 1#uscalar => ok return_carrier4
           | _ =>
             let o5 ← lift (U32.checked_sub x 5#u32)
-            let (join_flag5, join_return5) ←
+            let (return_carrier5, join_flag5) ←
               match o5 with
-              | none => ok (0#u32, 0#u32)
+              | none => ok (return_carrier4, 0#u32)
               | some a =>
                 do
                 let i ← a % 7#u32
                 if i = 0#u32
                 then
                   if a > 15#u32
-                  then let join_return6 ← a + 5#u32
-                       ok (3#u32, join_return6)
-                  else ok (0#u32, 0#u32)
-                else ok (0#u32, 0#u32)
+                  then
+                    let return_carrier6 ← a + 5#u32
+                    ok (return_carrier6, 1#u32)
+                  else ok (return_carrier4, 0#u32)
+                else ok (return_carrier4, 0#u32)
             match join_flag5 with
-            | 3#uscalar => ok join_return5
+            | 1#uscalar => ok return_carrier5
             | _ =>
               let o6 ← lift (U32.checked_sub x 6#u32)
-              let (join_flag6, join_return6) ←
+              let (return_carrier6, join_flag6) ←
                 match o6 with
-                | none => ok (0#u32, 0#u32)
+                | none => ok (return_carrier5, 0#u32)
                 | some a =>
                   do
                   let i ← a % 8#u32
@@ -137,17 +140,17 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                   then
                     if a > 18#u32
                     then
-                      let join_return7 ← a + 6#u32
-                      ok (3#u32, join_return7)
-                    else ok (0#u32, 0#u32)
-                  else ok (0#u32, 0#u32)
+                      let return_carrier7 ← a + 6#u32
+                      ok (return_carrier7, 1#u32)
+                    else ok (return_carrier5, 0#u32)
+                  else ok (return_carrier5, 0#u32)
               match join_flag6 with
-              | 3#uscalar => ok join_return6
+              | 1#uscalar => ok return_carrier6
               | _ =>
                 let o7 ← lift (U32.checked_sub x 7#u32)
-                let (join_flag7, join_return7) ←
+                let (return_carrier7, join_flag7) ←
                   match o7 with
-                  | none => ok (0#u32, 0#u32)
+                  | none => ok (return_carrier6, 0#u32)
                   | some a =>
                     do
                     let i ← a % 9#u32
@@ -155,17 +158,17 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                     then
                       if a > 21#u32
                       then
-                        let join_return8 ← a + 7#u32
-                        ok (3#u32, join_return8)
-                      else ok (0#u32, 0#u32)
-                    else ok (0#u32, 0#u32)
+                        let return_carrier8 ← a + 7#u32
+                        ok (return_carrier8, 1#u32)
+                      else ok (return_carrier6, 0#u32)
+                    else ok (return_carrier6, 0#u32)
                 match join_flag7 with
-                | 3#uscalar => ok join_return7
+                | 1#uscalar => ok return_carrier7
                 | _ =>
                   let o8 ← lift (U32.checked_sub x 8#u32)
-                  let (join_flag8, join_return8) ←
+                  let (return_carrier8, join_flag8) ←
                     match o8 with
-                    | none => ok (0#u32, 0#u32)
+                    | none => ok (return_carrier7, 0#u32)
                     | some a =>
                       do
                       let i ← a % 10#u32
@@ -173,17 +176,17 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                       then
                         if a > 24#u32
                         then
-                          let join_return9 ← a + 8#u32
-                          ok (3#u32, join_return9)
-                        else ok (0#u32, 0#u32)
-                      else ok (0#u32, 0#u32)
+                          let return_carrier9 ← a + 8#u32
+                          ok (return_carrier9, 1#u32)
+                        else ok (return_carrier7, 0#u32)
+                      else ok (return_carrier7, 0#u32)
                   match join_flag8 with
-                  | 3#uscalar => ok join_return8
+                  | 1#uscalar => ok return_carrier8
                   | _ =>
                     let o9 ← lift (U32.checked_sub x 9#u32)
-                    let (join_flag9, join_return9) ←
+                    let (return_carrier9, join_flag9) ←
                       match o9 with
-                      | none => ok (0#u32, 0#u32)
+                      | none => ok (return_carrier8, 0#u32)
                       | some a =>
                         do
                         let i ← a % 11#u32
@@ -191,17 +194,17 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                         then
                           if a > 27#u32
                           then
-                            let join_return10 ← a + 9#u32
-                            ok (3#u32, join_return10)
-                          else ok (0#u32, 0#u32)
-                        else ok (0#u32, 0#u32)
+                            let return_carrier10 ← a + 9#u32
+                            ok (return_carrier10, 1#u32)
+                          else ok (return_carrier8, 0#u32)
+                        else ok (return_carrier8, 0#u32)
                     match join_flag9 with
-                    | 3#uscalar => ok join_return9
+                    | 1#uscalar => ok return_carrier9
                     | _ =>
                       let o10 ← lift (U32.checked_sub x 10#u32)
-                      let (join_flag10, join_return10) ←
+                      let (return_carrier10, join_flag10) ←
                         match o10 with
-                        | none => ok (0#u32, 0#u32)
+                        | none => ok (return_carrier9, 0#u32)
                         | some a =>
                           do
                           let i ← a % 12#u32
@@ -209,17 +212,17 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                           then
                             if a > 30#u32
                             then
-                              let join_return11 ← a + 10#u32
-                              ok (3#u32, join_return11)
-                            else ok (0#u32, 0#u32)
-                          else ok (0#u32, 0#u32)
+                              let return_carrier11 ← a + 10#u32
+                              ok (return_carrier11, 1#u32)
+                            else ok (return_carrier9, 0#u32)
+                          else ok (return_carrier9, 0#u32)
                       match join_flag10 with
-                      | 3#uscalar => ok join_return10
+                      | 1#uscalar => ok return_carrier10
                       | _ =>
                         let o11 ← lift (U32.checked_sub x 11#u32)
-                        let (join_flag11, join_return11) ←
+                        let (return_carrier11, join_flag11) ←
                           match o11 with
-                          | none => ok (0#u32, 0#u32)
+                          | none => ok (return_carrier10, 0#u32)
                           | some a =>
                             do
                             let i ← a % 13#u32
@@ -227,12 +230,12 @@ def rules_loop (x : Std.U32) (o : Option Std.U32) : Result Std.U32 := do
                             then
                               if a > 33#u32
                               then
-                                let join_return12 ← a + 11#u32
-                                ok (3#u32, join_return12)
-                              else ok (0#u32, 0#u32)
-                            else ok (0#u32, 0#u32)
+                                let return_carrier12 ← a + 11#u32
+                                ok (return_carrier12, 1#u32)
+                              else ok (return_carrier10, 0#u32)
+                            else ok (return_carrier10, 0#u32)
                         match join_flag11 with
-                        | 3#uscalar => ok join_return11
+                        | 1#uscalar => ok return_carrier11
                         | _ => ok 0#u32
 
 /-- [clifv_forward_break_chain::rules]:

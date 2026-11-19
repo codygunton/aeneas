@@ -388,15 +388,25 @@ let update_array_default (crate : crate) : crate =
     in
     visitor#visit_crate None crate
 
+(** {1 Loop exits and join points}
+
+    The passes below make the control-flow shapes produced by the control-flow
+    reconstruction translatable, without duplicating code: early returns inside
+    nested loops and exits to outer loops ([lower_loop_exits]), and the
+    [loop { ...; break }] blocks which encode join points when the
+    reconstruction doesn't duplicate code ([join_block_escapes]). Both route
+    exits through joins of the symbolic contexts, where a value initialized on
+    some paths only becomes uninitialized: the return value is thus kept in a
+    carrier local initialized at function entry ([ret_to_carrier], undone
+    before every [return] by [finalize_return_carrier]). *)
+
 type carrier =
   [ `Scalar of constant_expr
   | `Option of type_decl_ref * variant_id * variant_id ]
 
-(** How to carry a value of type [ty] which is only initialized on some paths
-    across a join of the contexts (where the uninitialized value would make the
-    joined value uninitialized): in a local initialized before the branching, to
-    [0]/[false] for an integer/boolean, otherwise to [None] (an [Option] of
-    [ty]; only if [Option] is among the crate's declarations). *)
+(** How to carry a value of type [ty]: in a local initialized to [0]/[false]
+    for an integer/boolean, otherwise to [None] (an [Option] of [ty]; only if
+    [Option] is among the crate's declarations). *)
 let value_carrier (crate : crate) (ty : ty) : carrier option =
   match ty with
   | TScalar (TInteger (Unsigned u)) ->
@@ -442,6 +452,17 @@ let value_carrier (crate : crate) (ty : ty) : carrier option =
                  | _ -> None)
              | _ -> None))
 
+let carrier_ty (carrier : carrier) (ty : ty) : ty =
+  match carrier with
+  | `Option (tref, _, _) -> TAdt tref
+  | `Scalar _ -> ty
+
+let carrier_init (carrier : carrier) : rvalue =
+  match carrier with
+  | `Option (tref, none, _) ->
+      Aggregate (AggregatedAdt (tref, Some none, None), [])
+  | `Scalar c -> Use (Constant c, NoRetag)
+
 (** The value to store in a carrier to carry the value of [src] *)
 let carry_value (carrier : carrier) (src : place) : rvalue =
   match carrier with
@@ -449,27 +470,22 @@ let carry_value (carrier : carrier) (src : place) : rvalue =
       Aggregate (AggregatedAdt (tref, Some some, None), [ Move src ])
   | `Scalar _ -> Use (Move src, NoRetag)
 
-(** The type of a carrier for values of type [ty] *)
-let carrier_ty (carrier : carrier) (ty : ty) : ty =
-  match carrier with
-  | `Option (tref, _, _) -> TAdt tref
-  | `Scalar _ -> ty
+let mk_statement span kind : statement =
+  { span; statement_id = StatementId.zero; kind; comments_before = [] }
 
-(** The initial value of a carrier *)
-let carrier_init (carrier : carrier) : rvalue =
-  match carrier with
-  | `Option (tref, none, _) ->
-      Aggregate (AggregatedAdt (tref, Some none, None), [])
-  | `Scalar c -> Use (Constant c, NoRetag)
+let mk_block span statements : block =
+  { span; block_id = BlockId.zero; statements }
+
+let u32_ty : ty = TScalar (TInteger (Unsigned U32))
+
+let mk_u32 (k : int) : constant_expr =
+  { kind = CInteger (UnsignedInteger (U32, Z.of_int k)); ty = u32_ty }
 
 (** Statements moving the value out of the carrier [src] into [dst], then
     executing [k] ([UndefinedBehavior] if an [Option] carrier is [None]) *)
 let uncarry_value (span : Meta.span) (carrier : carrier) (dst : place)
     (src : place) (k : statement list) : statement list =
-  let mk_st kind : statement =
-    { span; statement_id = StatementId.zero; kind; comments_before = [] }
-  in
-  let mk_block statements : block = { span; block_id = BlockId.zero; statements } in
+  let mk_st = mk_statement span in
   match carrier with
   | `Scalar _ -> mk_st (Assign (dst, Use (Move src, NoRetag))) :: k
   | `Option (tref, _, some) ->
@@ -498,20 +514,237 @@ let uncarry_value (span : Meta.span) (carrier : carrier) (dst : place)
           (Switch
              ( data,
                [
-                 mk_block (mk_st (Assign (dst, Use (Move payload, NoRetag))) :: k);
-                 mk_block [ mk_st UndefinedBehavior ];
+                 mk_block span
+                   (mk_st (Assign (dst, Use (Move payload, NoRetag))) :: k);
+                 mk_block span [ mk_st UndefinedBehavior ];
                ] ));
       ]
+
+(** Helper to introduce fresh locals in a body: returns a function creating a
+    fresh local, and a function installing the new locals in the body. *)
+let fresh_locals (body : expr_body) :
+    (Meta.span -> string -> ty -> place) * (block -> expr_body) =
+  let new_locals = ref [] in
+  let _, gen =
+    LocalId.mk_stateful_generator_starting_at_id
+      (LocalId.of_int (List.length body.locals.locals))
+  in
+  let fresh span (name : string) (ty : ty) : place =
+    let local =
+      {
+        index = gen ();
+        local_ty = ty;
+        name = Some name;
+        span;
+        is_mutable = true;
+        borrowck_constraints = [];
+        drop_flag_for = None;
+      }
+    in
+    new_locals := local :: !new_locals;
+    { kind = PlaceLocal local.index; ty }
+  in
+  let finish (b : block) : expr_body =
+    {
+      body with
+      body = b;
+      locals =
+        { body.locals with locals = body.locals.locals @ List.rev !new_locals };
+    }
+  in
+  (fresh, finish)
+
+(** Does a loop body continue to its loop (not counting the nested loops)? *)
+let loop_continues (loop_body : block) : bool =
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+      method! visit_Loop depth b = super#visit_Loop (depth + 1) b
+      method! visit_Continue depth i = if i = depth then raise Utils.Found
+    end
+  in
+  try
+    visitor#visit_block 0 loop_body;
+    false
+  with Utils.Found -> true
+
+let return_carrier_name = "return_carrier"
+
+let ret_place0 (body : expr_body) : place =
+  { kind = PlaceLocal LocalId.zero; ty = (List.hd body.locals.locals).local_ty }
+
+(** The carrier introduced by [ret_to_carrier], if any *)
+let find_return_carrier (body : expr_body) : place option =
+  List.find_map
+    (fun (l : local) ->
+      if l.name = Some return_carrier_name then
+        Some { kind = PlaceLocal l.index; ty = l.local_ty }
+      else None)
+    body.locals.locals
+
+(** Keep the return value in a carrier local initialized at function entry,
+    in the functions whose loops are lowered by [lower_loop_exits] or
+    [join_block_escapes] (other functions are left unchanged): every
+    assignment to the return place [_0] is followed by moving it into the
+    carrier, and [finalize_return_carrier] moves it back before every
+    [return]. We only do so if [_0] is only used as a whole destination. *)
+let ret_to_carrier (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      (* Do the loops need lowering, or does the function have many branchings
+         containing early returns and followed by more code (the following
+         code is evaluated once per branch which doesn't return, see
+         [join_block_escapes])? *)
+      let needs =
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_Loop depth b =
+              if not (loop_continues b) then raise Utils.Found;
+              super#visit_Loop (depth + 1) b
+
+            method! visit_Return depth =
+              if depth >= 2 then raise Utils.Found
+
+            method! visit_Break _ i = if i >= 1 then raise Utils.Found
+            method! visit_Continue _ i = if i >= 1 then raise Utils.Found
+          end
+        in
+        let returning_branchings =
+          let count = ref 0 in
+          let has_return (st : statement) =
+            let visitor =
+              object
+                inherit [_] iter_statement
+                method! visit_Return _ = raise Utils.Found
+              end
+            in
+            try
+              visitor#visit_statement () st;
+              false
+            with Utils.Found -> true
+          in
+          let visitor =
+            object
+              inherit [_] iter_statement as super
+
+              method! visit_block env b =
+                let rec go (stl : statement list) =
+                  match stl with
+                  | ({ kind = Switch _; _ } as st) :: (_ :: _ as rest)
+                    when has_return st ->
+                      incr count;
+                      go rest
+                  | _ :: rest -> go rest
+                  | [] -> ()
+                in
+                go b.statements;
+                super#visit_block env b
+            end
+          in
+          visitor#visit_block () body.body;
+          !count
+        in
+        (try
+           visitor#visit_block 0 body.body;
+           false
+         with Utils.Found -> true)
+        || returning_branchings >= 4
+      in
+      (* Is [_0] only used as a whole destination? *)
+      let whole_dest_only =
+        let is_ret (p : place) =
+          match p.kind with
+          | PlaceLocal id -> id = LocalId.zero
+          | _ -> false
+        in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_place env p =
+              (match p.kind with
+              | PlaceLocal id when id = LocalId.zero -> raise Utils.Found
+              | _ -> ());
+              super#visit_place env p
+
+            method! visit_statement env st =
+              match st.kind with
+              | Assign (p, rv) when is_ret p -> super#visit_rvalue env rv
+              | Call (call, p, unwind) when is_ret p ->
+                  super#visit_call env call;
+                  super#visit_block env unwind
+              | _ -> super#visit_statement env st
+          end
+        in
+        try
+          visitor#visit_block () body.body;
+          true
+        with Utils.Found -> false
+      in
+      let ret0 = ret_place0 body in
+      if not (needs && whole_dest_only) then f
+      else (
+        match value_carrier crate ret0.ty with
+        | None -> f
+        | Some carrier ->
+            let fresh, finish = fresh_locals body in
+            let span = f.item_meta.span in
+            let ret = fresh span return_carrier_name (carrier_ty carrier ret0.ty) in
+            let carry span = mk_statement span (Assign (ret, carry_value carrier ret0)) in
+            let is_ret_dest (st : statement) =
+              match st.kind with
+              | Assign ({ kind = PlaceLocal id; _ }, _)
+              | Call (_, { kind = PlaceLocal id; _ }, _) ->
+                  id = LocalId.zero
+              | _ -> false
+            in
+            let update (st : statement) : statement list =
+              if is_ret_dest st then [ st; carry st.span ] else [ st ]
+            in
+            let b = map_statement update body.body in
+            let b =
+              {
+                b with
+                statements =
+                  mk_statement span (Assign (ret, carrier_init carrier))
+                  :: b.statements;
+              }
+            in
+            { f with body = StructuredBody (finish b) })
+  | _ -> f
+
+(** Undo [ret_to_carrier] at every [return] (to be applied after the passes
+    which move the returns) *)
+let finalize_return_carrier (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body -> (
+      match find_return_carrier body with
+      | None -> f
+      | Some ret ->
+          let ret0 = ret_place0 body in
+          let carrier = Option.get (value_carrier crate ret0.ty) in
+          let update (st : statement) : statement list =
+            match st.kind with
+            | Return -> uncarry_value st.span carrier ret0 ret [ st ]
+            | _ -> [ st ]
+          in
+          {
+            f with
+            body = StructuredBody { body with body = map_statement update body.body };
+          })
+  | _ -> f
 
 (** Lower the exits of loops which leave more than the innermost loop: early
     [return]s inside loops, and [break]/[continue] to outer loops.
 
     Working bottom-up (innermost loops first), for every loop [L] whose body
-    contains, outside of nested loops, a [Return], a [Break d] or a
-    [Continue d] with [d >= 1], we introduce a fresh local [exit_L : u32],
-    initialized to [0] before [L], and rewrite those statements:
-    - [Return] (the return value is already in the return local) becomes
-      [exit_L := 1; break 0];
+    contains, outside of nested loops, a [Return] (if the return value is in
+    a carrier, see [ret_to_carrier]), a [Break d] or a [Continue d] with
+    [d >= 1], we introduce a fresh local [exit_L : u32], initialized to [0]
+    before [L], and rewrite those statements:
+    - [Return] becomes [exit_L := 1; break 0];
     - [Break d] becomes [exit_L := 2*d; break 0];
     - [Continue d] becomes [exit_L := 2*d+1; break 0].
     Immediately after [L] we dispatch on [exit_L]: [1] returns, [2*d] does
@@ -519,93 +752,46 @@ let uncarry_value (span : Meta.span) (carrier : carrier) (dst : place)
     through. The dispatch is itself at the level of the enclosing loop, whose
     lowering handles it in turn.
 
-    Afterwards every loop exits only with [break 0] (or [continue 0]), and the
-    loop pre-pass ([update_loops]) applies unchanged. Contrary to moving the
-    code that follows a loop into it (see [update_loops]), this never
-    duplicates code. *)
-let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
+    Afterwards every loop exits only with [break 0] (or [continue 0]), apart
+    from the early returns that [update_loops] handles (those of a loop which
+    is not nested in another loop, see [upstream_handles_returns]), and
+    [update_loops] applies unchanged. Contrary to moving the code that follows
+    a loop into it (see [update_loops]), this never duplicates code. *)
+let lower_loop_exits (_ : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body ->
-      let new_locals = ref [] in
-      let _, gen =
-        LocalId.mk_stateful_generator_starting_at_id
-          (LocalId.of_int (List.length body.locals.locals))
-      in
-      let fresh_place span (name : string) (ty : ty) : place =
-        let local =
-          {
-            index = gen ();
-            local_ty = ty;
-            name = Some name;
-            span;
-            is_mutable = true;
-            borrowck_constraints = [];
-            drop_flag_for = None;
-          }
-        in
-        new_locals := local :: !new_locals;
-        { kind = PlaceLocal local.index; ty }
-      in
-      let u32_ty = TScalar (TInteger (Unsigned U32)) in
-      let mk_st span kind : statement =
-        { span; statement_id = StatementId.zero; kind; comments_before = [] }
-      in
-      let mk_block span statements : block =
-        { span; block_id = BlockId.zero; statements }
-      in
-      let u32 (k : int) : constant_expr =
-        { kind = CInteger (UnsignedInteger (U32, Z.of_int k)); ty = u32_ty }
-      in
-      let assign span (p : place) (rv : rvalue) : statement =
-        mk_st span (Assign (p, rv))
-      in
+      let fresh, finish = fresh_locals body in
+      let has_carrier = Option.is_some (find_return_carrier body) in
       let set_exit span (exit : place) (k : int) : statement =
-        assign span exit (Use (Constant (u32 k), NoRetag))
+        mk_statement span (Assign (exit, Use (Constant (mk_u32 k), NoRetag)))
       in
-      (* A value returned from inside a loop must survive the join of the
-         contexts at the loop exit, where the return place is uninitialized on
-         the other exits: we carry it in a local initialized before the loop
-         (see [value_carrier]). Other early returns are not lowered
-         ([update_loops] handles them as before). *)
-      let ret_place0 : place =
-        let ty = (List.hd body.locals.locals).local_ty in
-        { kind = PlaceLocal LocalId.zero; ty }
-      in
-      let carrier = lazy (value_carrier crate ret_place0.ty) in
-      (* The locals introduced for one lowered loop *)
-      let module Exit = struct
-        type t = {
-          exit : place;
-          ret : place option;
-          returns : bool;
-              (** Whether to lower the early returns, see [lower_stmt] *)
-        }
-      end in
       (* Rewrite the exits of a loop body which leave the loop: the statements
-         outside of nested loops (which are already lowered) *)
-      let rewrite_escapes (x : Exit.t) (b : block) : block * int list =
+         outside of nested loops (which are already lowered). [returns]:
+         whether to lower the early returns. *)
+      let rewrite_escapes ~(returns : bool) (exit : place) (b : block) :
+          block * int list =
         let codes = ref [] in
         let escape span (k : int) : statement list =
           if not (List.mem k !codes) then codes := k :: !codes;
-          [ set_exit span x.exit k; mk_st span (Break 0) ]
+          [ set_exit span exit k; mk_statement span (Break 0) ]
+        in
+        let is_escape (st : statement) =
+          match st.kind with
+          | Return -> returns
+          | Break d | Continue d -> d >= 1
+          | _ -> false
         in
         (* The [StorageDead]s right before an escape end the scopes the escape
            leaves. Once the escape goes through the exit of the loop, they would
            make those locals uninitialized in the context joined at the exit
            while the other exits still use them: we remove them (the dispatch
            after the loop leaves those scopes). *)
-        let is_escape (st : statement) =
-          match st.kind with
-          | Return -> x.returns && Option.is_some (Lazy.force carrier)
-          | Break d | Continue d -> d >= 1
-          | _ -> false
+        let rec drop_storage_dead (acc : statement list) =
+          match acc with
+          | { kind = StorageDead _; _ } :: acc -> drop_storage_dead acc
+          | _ -> acc
         in
         let rec block (b : block) : block =
-          let rec drop_storage_dead (acc : statement list) =
-            match acc with
-            | { kind = StorageDead _; _ } :: acc -> drop_storage_dead acc
-            | _ -> acc
-          in
           let statements =
             List.fold_left
               (fun acc st ->
@@ -616,14 +802,7 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
           { b with statements = List.rev statements }
         and stmt (st : statement) : statement list =
           match st.kind with
-          | Return when is_escape st ->
-              let ret =
-                match x.ret with
-                | Some ret -> ret
-                | None -> ret_place0 (* only scanning, see [lower_stmt] *)
-              in
-              let carry = carry_value (Option.get (Lazy.force carrier)) ret_place0 in
-              assign st.span ret carry :: escape st.span 1
+          | Return when returns -> escape st.span 1
           | Break d when d >= 1 -> escape st.span (2 * d)
           | Continue d when d >= 1 -> escape st.span ((2 * d) + 1)
           | Switch (data, branches) ->
@@ -634,31 +813,24 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
         (b, List.sort compare !codes)
       in
       (* The dispatch after a lowered loop *)
-      let dispatch span (x : Exit.t) (codes : int list) : statement =
-        let target (k : int) : statement list =
-          if k = 1 then
-            uncarry_value span
-              (Option.get (Lazy.force carrier))
-              ret_place0 (Option.get x.ret)
-              [ mk_st span Return ]
-          else if k mod 2 = 0 then [ mk_st span (Break ((k / 2) - 1)) ]
-          else [ mk_st span (Continue ((k / 2) - 1)) ]
-        in
-        let branches =
-          List.mapi (fun i k -> (u32 k, BranchId.of_int i)) codes
-        in
-        let blocks =
-          List.map (fun k -> mk_block span (target k)) codes
-          @ [ mk_block span [ mk_st span Nop ] ]
+      let dispatch span (exit : place) (codes : int list) : statement =
+        let target (k : int) : statement_kind =
+          if k = 1 then Return
+          else if k mod 2 = 0 then Break ((k / 2) - 1)
+          else Continue ((k / 2) - 1)
         in
         let data : switch_data =
           {
-            scrutinee = SwitchValue (Read x.exit);
-            branches;
+            scrutinee = SwitchValue (Read exit);
+            branches = List.mapi (fun i k -> (mk_u32 k, BranchId.of_int i)) codes;
             fallback = Some (BranchId.of_int (List.length codes));
           }
         in
-        mk_st span (Switch (data, blocks))
+        mk_statement span
+          (Switch
+             ( data,
+               List.map (fun k -> mk_block span [ mk_statement span (target k) ]) codes
+               @ [ mk_block span [ mk_statement span Nop ] ] ))
       in
       (* Does [update_loops] handle the early returns of a loop which is not
          nested in another loop: either the loop has no [break] at all
@@ -702,41 +874,25 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
         | Loop loop_body ->
             let loop_body = lower_block (depth + 1) loop_body in
             (* Early returns are lowered when [update_loops] can't handle them
-               (or only by duplicating code at every loop level) *)
+               (or only by duplicating code at every loop level), and the return
+               value is in a carrier *)
             let returns =
-              depth > 0 || not (upstream_handles_returns loop_body after)
+              has_carrier
+              && (depth > 0 || not (upstream_handles_returns loop_body after))
             in
-            (* Only allocate the locals if the loop has exits to lower *)
-            let scan : Exit.t =
-              {
-                exit = { kind = PlaceLocal LocalId.zero; ty = u32_ty };
-                ret = None;
-                returns;
-              }
-            in
-            let _, codes = rewrite_escapes scan loop_body in
+            (* Only allocate the local if the loop has exits to lower *)
+            let scan = { kind = PlaceLocal LocalId.zero; ty = u32_ty } in
+            let _, codes = rewrite_escapes ~returns scan loop_body in
             if codes = [] then [ { st with kind = Loop loop_body } ]
             else
               let span = st.span in
-              let exit = fresh_place span "loop_exit" u32_ty in
-              let ret_init, ret =
-                match Lazy.force carrier with
-                | Some carrier when List.mem 1 codes ->
-                    let ret =
-                      fresh_place span "loop_return"
-                        (carrier_ty carrier ret_place0.ty)
-                    in
-                    ([ assign span ret (carrier_init carrier) ], Some ret)
-                | _ -> ([], None)
-              in
-              let x : Exit.t = { exit; ret; returns } in
-              let loop_body, codes = rewrite_escapes x loop_body in
-              ret_init
-              @ [
-                  set_exit span exit 0;
-                  { st with kind = Loop loop_body };
-                  dispatch span x codes;
-                ]
+              let exit = fresh span "loop_exit" u32_ty in
+              let loop_body, codes = rewrite_escapes ~returns exit loop_body in
+              [
+                set_exit span exit 0;
+                { st with kind = Loop loop_body };
+                dispatch span exit codes;
+              ]
         | Switch (data, branches) ->
             [
               {
@@ -746,20 +902,7 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
             ]
         | _ -> [ st ]
       in
-      let body_body = lower_block 0 body.body in
-      let body =
-        StructuredBody
-          {
-            body with
-            body = body_body;
-            locals =
-              {
-                body.locals with
-                locals = body.locals.locals @ List.rev !new_locals;
-              };
-          }
-      in
-      { f with body }
+      { f with body = StructuredBody (finish (lower_block 0 body.body)) }
   | _ -> f
 
 (** Make the branchings of loops which never continue joinable.
@@ -774,64 +917,25 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
     the next one from several places).
 
     In the body of such a loop, for every branching [s] (outside of nested
-    loops) containing a [break 0] or a [return], we introduce a fresh local
-    [flag : u32] initialized to [0] before [s], and rewrite the branches of
-    [s]:
-    - [break 0] becomes [flag := 1];
-    - [_0 := e; ...; break 0] becomes [_0 := e; ...; carrier := carry(_0);
-      flag := 3];
-    - [return] becomes [carrier := carry(_0); flag := 2];
-    and the statements following a statement which may set the flag are
-    guarded by [if flag == 0]. After [s] we dispatch on [flag]: [1] breaks, [2]
-    returns, [3] breaks after moving the carried value back into [_0], and [0]
-    falls through. The carrier (see [value_carrier]) is initialized before [s]:
-    the return value must survive the join after [s]. *)
-let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
+    loops) containing a [break 0] or a [return] (if the return value is in a
+    carrier, see [ret_to_carrier]), we introduce a fresh local [flag : u32]
+    initialized to [0] before [s], and rewrite the branches of [s]: [break 0]
+    becomes [flag := 1] and [return] becomes [flag := 2]; the statements
+    following a statement which may set the flag are guarded by
+    [if flag == 0]. After [s] we dispatch on [flag]: [1] breaks, [2] returns,
+    and [0] falls through. *)
+let join_block_escapes (_ : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body ->
-      let new_locals = ref [] in
-      let _, gen =
-        LocalId.mk_stateful_generator_starting_at_id
-          (LocalId.of_int (List.length body.locals.locals))
-      in
-      let fresh_place span (name : string) (ty : ty) : place =
-        let local =
-          {
-            index = gen ();
-            local_ty = ty;
-            name = Some name;
-            span;
-            is_mutable = true;
-            borrowck_constraints = [];
-            drop_flag_for = None;
-          }
-        in
-        new_locals := local :: !new_locals;
-        { kind = PlaceLocal local.index; ty }
-      in
-      let u32_ty = TScalar (TInteger (Unsigned U32)) in
-      let mk_st span kind : statement =
-        { span; statement_id = StatementId.zero; kind; comments_before = [] }
-      in
-      let mk_block span statements : block =
-        { span; block_id = BlockId.zero; statements }
-      in
-      let u32 (k : int) : constant_expr =
-        { kind = CInteger (UnsignedInteger (U32, Z.of_int k)); ty = u32_ty }
-      in
+      let fresh, finish = fresh_locals body in
+      let has_carrier = Option.is_some (find_return_carrier body) in
       let set span (p : place) (k : int) : statement =
-        mk_st span (Assign (p, Use (Constant (u32 k), NoRetag)))
+        mk_statement span (Assign (p, Use (Constant (mk_u32 k), NoRetag)))
       in
-      let ret_place0 : place =
-        {
-          kind = PlaceLocal LocalId.zero;
-          ty = (List.hd body.locals.locals).local_ty;
-        }
-      in
-      let carrier = lazy (value_carrier crate ret_place0.ty) in
-      let assigns_ret (st : statement) =
+      (* Statements without any effect on the execution *)
+      let is_trivial (st : statement) =
         match st.kind with
-        | Assign ({ kind = PlaceLocal id; _ }, _) -> id = LocalId.zero
+        | StorageDead _ | StorageLive _ | Nop -> true
         | _ -> false
       in
       (* Does a block contain an escape to rewrite (outside nested loops)? *)
@@ -840,21 +944,17 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
       and st_has_escape (st : statement) : bool =
         match st.kind with
         | Break 0 -> true
-        | Return -> Option.is_some (Lazy.force carrier)
+        | Return -> has_carrier
         | Switch (_, branches) -> List.exists has_escape branches
         | _ -> false
       in
       (* Rewrite the escapes in a block of a branching *)
-      let rewrite (flag : place) (carried : place option) (codes : int list ref)
-          (b : block) : block =
+      let rewrite (flag : place) (codes : int list ref) (b : block) : block =
         let code span k : statement =
           if not (List.mem k !codes) then codes := k :: !codes;
           set span flag k
         in
-        let carry span : statement =
-          let c = Option.get (Lazy.force carrier) in
-          mk_st span (Assign (Option.get carried, carry_value c ret_place0))
-        in
+        (* See [lower_loop_exits] *)
         let rec drop_storage_dead (acc : statement list) =
           match acc with
           | { kind = StorageDead _; _ } :: acc -> drop_storage_dead acc
@@ -869,34 +969,31 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
             | st :: rest -> (
                 match st.kind with
                 | Break 0 ->
-                    (* The statements after the break are unreachable *)
-                    let acc = drop_storage_dead acc in
-                    if Option.is_some carried && List.exists assigns_ret acc then
-                      List.rev_append acc [ carry st.span; code st.span 3 ]
-                    else List.rev_append acc [ code st.span 1 ]
-                | Return when Option.is_some carried ->
-                    let acc = drop_storage_dead acc in
-                    List.rev_append acc [ carry st.span; code st.span 2 ]
+                    (* The statements after the escape are unreachable *)
+                    List.rev_append (drop_storage_dead acc) [ code st.span 1 ]
+                | Return when has_carrier ->
+                    List.rev_append (drop_storage_dead acc) [ code st.span 2 ]
                 | Switch (data, branches) when List.exists has_escape branches
                   ->
                     let st =
                       { st with kind = Switch (data, List.map block branches) }
                     in
-                    if rest = [] then List.rev (st :: acc)
+                    if List.for_all is_trivial rest then
+                      List.rev_append acc (st :: rest)
                     else
                       (* Guard the following statements with [if flag == 0] *)
                       let span = st.span in
                       let guard =
-                        mk_st span
+                        mk_statement span
                           (Switch
                              ( {
                                  scrutinee = SwitchValue (Read flag);
-                                 branches = [ (u32 0, BranchId.zero) ];
+                                 branches = [ (mk_u32 0, BranchId.zero) ];
                                  fallback = Some (BranchId.of_int 1);
                                },
                                [
                                  mk_block span (go [] rest);
-                                 mk_block span [ mk_st span Nop ];
+                                 mk_block span [ mk_statement span Nop ];
                                ] ))
                       in
                       List.rev_append acc [ st; guard ]
@@ -906,32 +1003,21 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
         in
         block b
       in
-      let dispatch span (flag : place) (carried : place option)
-          (codes : int list) : statement =
-        let target k : statement list =
-          let uncarry k =
-            uncarry_value span
-              (Option.get (Lazy.force carrier))
-              ret_place0 (Option.get carried) [ mk_st span k ]
-          in
-          match k with
-          | 1 -> [ mk_st span (Break 0) ]
-          | 2 -> uncarry Return
-          | _ -> uncarry (Break 0)
-        in
+      let dispatch span (flag : place) (codes : int list) : statement =
+        let target k = if k = 1 then Break 0 else Return in
         let codes = List.sort compare codes in
         let data : switch_data =
           {
             scrutinee = SwitchValue (Read flag);
-            branches = List.mapi (fun i k -> (u32 k, BranchId.of_int i)) codes;
+            branches = List.mapi (fun i k -> (mk_u32 k, BranchId.of_int i)) codes;
             fallback = Some (BranchId.of_int (List.length codes));
           }
         in
-        mk_st span
+        mk_statement span
           (Switch
              ( data,
-               List.map (fun k -> mk_block span (target k)) codes
-               @ [ mk_block span [ mk_st span Nop ] ] ))
+               List.map (fun k -> mk_block span [ mk_statement span (target k) ]) codes
+               @ [ mk_block span [ mk_statement span Nop ] ] ))
       in
       (* Transform the statements of the body of a loop which never continues
          (outside of nested loops, which are visited separately) *)
@@ -941,24 +1027,10 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
           match st.kind with
           | Switch (_, branches) when List.exists has_escape branches ->
               let span = st.span in
-              let flag = fresh_place span "join_flag" u32_ty in
-              let carried =
-                Option.map
-                  (fun c ->
-                    fresh_place span "join_return" (carrier_ty c ret_place0.ty))
-                  (Lazy.force carrier)
-              in
+              let flag = fresh span "join_flag" u32_ty in
               let codes = ref [] in
-              let st =
-                List.hd (rewrite flag carried codes (mk_block span [ st ])).statements
-              in
-              let init_carrier =
-                match (carried, Lazy.force carrier) with
-                | Some p, Some c -> [ mk_st span (Assign (p, carrier_init c)) ]
-                | _ -> []
-              in
-              init_carrier
-              @ [ set span flag 0; st; dispatch span flag carried !codes ]
+              let st = List.hd (rewrite flag codes (mk_block span [ st ])).statements in
+              [ set span flag 0; st; dispatch span flag !codes ]
           | _ -> [ st ]
         in
         { b with statements = List.concat_map stmt b.statements }
@@ -966,22 +1038,8 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
       and visit (st : statement) : statement =
         match st.kind with
         | Loop loop_body ->
-            let continues =
-              let visitor =
-                object
-                  inherit [_] iter_statement as super
-                  method! visit_Loop depth b = super#visit_Loop (depth + 1) b
-
-                  method! visit_Continue depth i =
-                    if i = depth then raise Utils.Found
-                end
-              in
-              try
-                visitor#visit_block 0 loop_body;
-                false
-              with Utils.Found -> true
-            in
-            if continues then { st with kind = Loop (visit_block loop_body) }
+            if loop_continues loop_body then
+              { st with kind = Loop (visit_block loop_body) }
             else { st with kind = Loop (in_block_loop loop_body) }
         | Switch (data, branches) ->
             { st with kind = Switch (data, List.map visit_block branches) }
@@ -989,20 +1047,107 @@ let join_block_escapes (crate : crate) (f : fun_decl) : fun_decl =
       and visit_block (b : block) : block =
         { b with statements = List.map visit b.statements }
       in
-      let body_body = visit_block body.body in
-      let body =
-        StructuredBody
-          {
-            body with
-            body = body_body;
-            locals =
-              {
-                body.locals with
-                locals = body.locals.locals @ List.rev !new_locals;
-              };
-          }
+      (* With the return value in a carrier, the branchings containing early
+         returns are made joinable in the whole body (not only in loop
+         bodies) *)
+      let b =
+        if has_carrier then in_block_loop body.body else visit_block body.body
       in
-      { f with body }
+      { f with body = StructuredBody (finish b) }
+  | _ -> f
+
+(** Does the function contain a match on an enumeration whose fallback branch
+    covers many variants (at least 8)? The symbolic execution evaluates such a
+    fallback branch once per variant (see [hoist_match_fallbacks]). *)
+let has_wide_fallback_match (crate : crate) (body : expr_body) : bool =
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+
+      method! visit_statement env st =
+        (match st.kind with
+        | Switch ({ scrutinee = SwitchDiscriminant p; fallback = Some _; branches }, _)
+          -> (
+            match p.ty with
+            | TAdt { id; builtin = None; _ } -> (
+                match TypeDeclId.Map.find_opt id crate.type_decls with
+                | Some { kind = Enum variants; _ }
+                  when List.length variants - List.length branches >= 8 ->
+                    raise Utils.Found
+                | _ -> ())
+            | _ -> ())
+        | _ -> ());
+        super#visit_statement env st
+    end
+  in
+  try
+    visitor#visit_block () body.body;
+    false
+  with Utils.Found -> true
+
+(** Evaluate the fallback branch of a match on an enumeration only once.
+
+    The symbolic execution expands the scrutinee of a match into every variant
+    of the enumeration, and evaluates the fallback branch once per variant it
+    covers (Cranelift's instructions and opcodes have hundreds of variants). In
+    generated code which tries rules in sequence, the fallback branch contains
+    the next rules, so this is exponential in the depth of such matches.
+
+    For a match whose fallback branch does something, and none of whose
+    branches contains a [break], [continue] or [return] (so that the contexts
+    are joined after it, see [join_block_escapes]), we move the fallback
+    branch after the match:
+    [flag := 0; match x { ..., _ => flag := 1 }; if flag == 1 { fallback }].
+    We only do so in functions whose return value is in a carrier (see
+    [ret_to_carrier]) or with such matches (see [has_wide_fallback_match]). *)
+let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body
+    when Option.is_some (find_return_carrier body)
+         || has_wide_fallback_match crate body ->
+      let fresh, finish = fresh_locals body in
+      let is_trivial (st : statement) =
+        match st.kind with
+        | StorageDead _ | StorageLive _ | Nop -> true
+        | _ -> false
+      in
+      let update (st : statement) : statement list =
+        match st.kind with
+        | Switch
+            (({ scrutinee = SwitchDiscriminant _; fallback = Some fb; _ } as data),
+              branches)
+          when (not (List.for_all is_trivial (List.nth branches (BranchId.to_int fb)).statements))
+               && not (List.exists block_has_break_continue_return branches)
+          ->
+            let span = st.span in
+            let flag = fresh span "fallback_flag" u32_ty in
+            let set k =
+              mk_statement span
+                (Assign (flag, Use (Constant (mk_u32 k), NoRetag)))
+            in
+            let fb_index = BranchId.to_int fb in
+            let fallback = List.nth branches fb_index in
+            let branches =
+              List.mapi
+                (fun i b -> if i = fb_index then mk_block span [ set 1 ] else b)
+                branches
+            in
+            let after : switch_data =
+              {
+                scrutinee = SwitchValue (Read flag);
+                branches = [ (mk_u32 1, BranchId.zero) ];
+                fallback = Some (BranchId.of_int 1);
+              }
+            in
+            [
+              set 0;
+              { st with kind = Switch (data, branches) };
+              mk_statement span
+                (Switch (after, [ fallback; mk_block span [ mk_statement span Nop ] ]));
+            ]
+        | _ -> [ st ]
+      in
+      { f with body = StructuredBody (finish (map_statement update body.body)) }
   | _ -> f
 
 exception FoundStatement of statement
@@ -1299,7 +1444,12 @@ let update_loops (crate : crate) (f : fun_decl) : fun_decl =
     the symbolic execution.
 
     The main goal of this pass is to improve the quality of the generated code.
-*)
+    We don't apply it to the functions whose branchings we make joinable (see
+    [join_block_escapes]), nor to the functions with matches whose fallback
+    branch covers many variants (see [has_wide_fallback_match]): inlining into
+    a branching evaluates the following code once per branch (once per variant
+    for such a fallback), which is exponential in the number of such
+    branchings in sequence. *)
 let remove_useless_joins (crate : crate) (f : fun_decl) : fun_decl =
   let f0 = f in
 
@@ -1356,6 +1506,10 @@ let remove_useless_joins (crate : crate) (f : fun_decl) : fun_decl =
 
   let body =
     match f.body with
+    | StructuredBody body
+      when Option.is_some (find_return_carrier body)
+           || has_wide_fallback_match crate body ->
+        StructuredBody body
     | StructuredBody body ->
         StructuredBody { body with body = snd (update_block [] body.body) }
     | other -> other
@@ -3001,14 +3155,17 @@ let apply_passes (crate : crate) : crate =
       ("fix_anon_const_initializers", fix_anon_const_initializers);
       ("erase_body_regions", erase_body_regions);
       ("remove_unreachable", remove_unreachable);
+      ("ret_to_carrier", ret_to_carrier);
       ("lower_loop_exits", lower_loop_exits);
       ("join_block_escapes", join_block_escapes);
+      ("hoist_match_fallbacks", hoist_match_fallbacks);
       ("update_loop", update_loops);
       ("remove_useless_joins", remove_useless_joins);
       ( "remove_shallow_borrows_storage_live_dead",
         remove_shallow_borrows_storage_live_dead );
       ("simplify_panics", simplify_panics);
       ("decompose_global_accesses", decompose_global_accesses);
+      ("finalize_return_carrier", finalize_return_carrier);
       ("refresh_statement_ids", refresh_statement_ids);
     ]
   in
@@ -3048,11 +3205,31 @@ let apply_passes (crate : crate) : crate =
               let env = Print.crate_to_fmt_env crate in
               "Before applying the prepasses:\n"
               ^ Print.fun_decl_to_string env "" " " f];
+            (* Debugging aid (see [AENEAS_ONLY] in [Translate]): print the
+               selected functions after the pre-passes (after each pass with
+               [AENEAS_TRACE_PASSES]) *)
+            let selected =
+              match Sys.getenv_opt "AENEAS_ONLY" with
+              | Some s ->
+                  let env = Print.crate_to_fmt_env crate in
+                  let name = Print.name_to_string env f.item_meta.name in
+                  Str.string_match (Str.regexp (".*" ^ Str.quote s)) name 0
+              | None -> false
+            in
+            let print (what : string) (f : fun_decl) =
+              let env = Print.crate_to_fmt_env crate in
+              prerr_endline (what ^ ":\n" ^ Print.fun_decl_to_string env "" " " f)
+            in
             let f : fun_decl =
               List.fold_left
-                (fun f (name, pass) -> apply_function_pass name pass f)
+                (fun f (name, pass) ->
+                  let f = apply_function_pass name pass f in
+                  if selected && Sys.getenv_opt "AENEAS_TRACE_PASSES" <> None
+                  then print ("After the pre-pass " ^ name) f;
+                  f)
                 f function_passes
             in
+            if selected then print "After the pre-passes" f;
             report 1;
             f)
           crate.fun_decls)
