@@ -229,6 +229,14 @@ instance Result_Inhabited (α : Type u) : Inhabited (Result α) :=
 instance Result_Nonempty (α : Type u) : Nonempty (Result α) :=
   Nonempty.intro div
 
+/-- The implementation of a function whose translation failed (or of an external function
+without a model): fails with `Error.undef`, after printing `[stub] <name>` to standard error
+(`dbgTrace`), which tells which missing function an execution reached. Logically, this is
+just `fail undef`. -/
+@[never_extract, noinline]
+def stub_fail {α : Type u} (name : String) : Result α :=
+  dbgTrace s!"[stub] {name}" fun _ => fail undef
+
 /-!
 # Helpers
 -/

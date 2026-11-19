@@ -42,7 +42,11 @@ axiom core.slice.Slice.as_ptr {T : Type _} : Slice T → Result (ConstRawPtr T)
     Source: 'tests/src/clifv_stub_failed_items.rs', lines 13:0-15:1
     Visibility: public -/
 opaque read_via_ptr
-  : Array Std.U16 8#usize → Result Std.U16 := fun _ => fail .undef
+  :
+  Array Std.U16 8#usize → Result Std.U16
+  :=
+  fun _ =>
+  stub_fail "clifv_stub_failed_items::read_via_ptr"
 
 /-- [clifv_stub_failed_items::caller]:
     Source: 'tests/src/clifv_stub_failed_items.rs', lines 18:0-20:1
@@ -56,7 +60,8 @@ def caller
 /-- [clifv_stub_failed_items::read_failed]:
     Source: 'tests/src/clifv_stub_failed_items.rs', lines 26:0-28:1
     Visibility: public -/
-opaque read_failed : Result Std.U16 := fail .undef
+opaque read_failed
+  : Result Std.U16 := stub_fail "clifv_stub_failed_items::read_failed"
 
 /-- Trait declaration: [clifv_stub_failed_items::Bad]
     Source: 'tests/src/clifv_stub_failed_items.rs', lines 32:0-34:1

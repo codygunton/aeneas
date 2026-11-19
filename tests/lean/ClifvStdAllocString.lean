@@ -207,7 +207,8 @@ def test_join : Result Unit := do
 /-- [clifv_std_alloc_string::test_replace]:
     Source: 'tests/src/clifv_std_alloc_string.rs', lines 44:0-49:1
     Visibility: public -/
-opaque test_replace : Result Unit := fail .undef
+opaque test_replace
+  : Result Unit := stub_fail "clifv_std_alloc_string::test_replace"
 
 /- Unit test for [clifv_std_alloc_string::test_replace] -/
 #guard (test_replace).reducesTo ()

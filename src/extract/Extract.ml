@@ -2364,7 +2364,9 @@ let extract_fun_decl_gen ?(stub : bool = false) (ctx : extraction_ctx)
     in
     F.pp_print_string fmt eq)
   else if stub && is_monadic_ty def.signature.output then (
-    (* [:= fun _ ... _ => fail .undef] (otherwise, Lean uses [default]) *)
+    (* [:= fun _ ... _ => stub_fail "<rust name>"] (otherwise, Lean uses
+       [default]): fails with [Error.undef] after printing the name of the
+       stub to standard error (see [Aeneas.Std.stub_fail]) *)
     F.pp_print_space fmt ();
     F.pp_print_string fmt ":=";
     F.pp_print_space fmt ();
@@ -2373,7 +2375,19 @@ let extract_fun_decl_gen ?(stub : bool = false) (ctx : extraction_ctx)
       List.iter (fun _ -> F.pp_print_string fmt " _") def.signature.inputs;
       F.pp_print_string fmt " =>";
       F.pp_print_space fmt ());
-    F.pp_print_string fmt "fail .undef");
+    let name = name_to_string ctx def.item_meta.name in
+    let escaped =
+      String.concat ""
+        (List.map
+           (fun c ->
+             match c with
+             | '"' -> "\\\""
+             | '\\' -> "\\\\"
+             | '\n' -> "\\n"
+             | c -> String.make 1 c)
+           (List.init (String.length name) (String.get name)))
+    in
+    F.pp_print_string fmt ("stub_fail \"" ^ escaped ^ "\""));
   (* Close the box for "(PARAMS) : EFFECT =" *)
   F.pp_close_box fmt ();
   (* Close the box for "let FUN_NAME (PARAMS) : EFFECT =" *)
