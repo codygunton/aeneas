@@ -430,7 +430,8 @@ let add_type_annotations (trans_ctx : trans_ctx)
         "After adding type annotations:\n\n"
         ^ PrintPure.fun_decl_to_string fmt decl];
       decl
-    with Errors.CFailure error ->
+    with exn when Errors.is_item_failure exn ->
+      let error = Errors.to_item_failure exn in
       let name = name_to_string trans_ctx decl.item_meta.name in
       let name_pattern =
         try

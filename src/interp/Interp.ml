@@ -698,7 +698,8 @@ let evaluate_function_symbolic (synthesize : bool) (decls_ctx : decls_ctx)
       let el = List.map (fun (ctx, res) -> finish res ctx) ctx_resl in
       (* Finish synthesizing *)
       if synthesize then Some (cc el) else None
-    with CFailure error ->
+    with exn when Errors.is_item_failure exn ->
+      let error = Errors.to_item_failure exn in
       let name = name_to_string () in
       let name_pattern =
         try

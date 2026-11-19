@@ -3078,7 +3078,12 @@ let extract_trait_decl_method_items_aux (ctx : extraction_ctx)
 let extract_trait_decl_method_items (ctx : extraction_ctx) (fmt : F.formatter)
     (decl : trait_decl) (meth : trait_method) : unit =
   try extract_trait_decl_method_items_aux ctx fmt decl meth
-  with CFailure _ ->
+  with exn when Errors.is_item_failure exn ->
+    (* The generated code contains [sorry]: report it *)
+    Errors.record_item_failure ~kind:"trait_decl"
+      ~rust_name:(name_to_string ctx decl.item_meta.name)
+      ~def_id:(TraitDeclId.to_int decl.def_id)
+      (Errors.to_item_failure exn);
     F.pp_print_space fmt ();
     extract_admit fmt
 
@@ -3429,7 +3434,12 @@ let extract_trait_impl_method_items (ctx : extraction_ctx) (fmt : F.formatter)
     (impl : trait_impl) (method_id : trait_method_id) (fn : fun_decl_ref binder)
     : unit =
   try extract_trait_impl_method_items_aux ctx fmt impl method_id fn
-  with CFailure _ ->
+  with exn when Errors.is_item_failure exn ->
+    (* The generated code contains [sorry]: report it *)
+    Errors.record_item_failure ~kind:"trait_impl"
+      ~rust_name:(name_to_string ctx impl.item_meta.name)
+      ~def_id:(TraitImplId.to_int impl.def_id)
+      (Errors.to_item_failure exn);
     F.pp_print_space fmt ();
     extract_admit fmt
 

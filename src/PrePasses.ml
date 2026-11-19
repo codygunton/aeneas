@@ -2277,7 +2277,8 @@ let decompose_global_accesses (crate : crate) (f : fun_decl) : fun_decl =
                   locals = body.locals.locals @ List.rev !new_locals;
                 };
             }
-        with CFailure error ->
+        with exn when Errors.is_item_failure exn ->
+          let error = Errors.to_item_failure exn in
           let mctx = Charon.NameMatcher.ctx_from_crate crate in
           let fmt_env = Print.crate_to_fmt_env crate in
           let name = Print.name_to_string fmt_env f.item_meta.name in
