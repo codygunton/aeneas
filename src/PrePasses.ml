@@ -757,23 +757,41 @@ let finalize_return_carrier (crate : crate) (f : fun_decl) : fun_decl =
     is not nested in another loop, see [upstream_handles_returns]), and
     [update_loops] applies unchanged. Contrary to moving the code that follows
     a loop into it (see [update_loops]), this never duplicates code. *)
-let lower_loop_exits (_ : crate) (f : fun_decl) : fun_decl =
+let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body ->
       let fresh, finish = fresh_locals body in
       let has_carrier = Option.is_some (find_return_carrier body) in
+      let ret0 = ret_place0 body in
+      (* Without a function-level carrier (see [ret_to_carrier]), the returned
+         value is carried out of the loop in a per-loop carrier, written at the
+         return sites *)
+      let loop_carrier = lazy (value_carrier crate ret0.ty) in
+      let can_lower_returns =
+        has_carrier || Option.is_some (Lazy.force loop_carrier)
+      in
       let set_exit span (exit : place) (k : int) : statement =
         mk_statement span (Assign (exit, Use (Constant (mk_u32 k), NoRetag)))
       in
       (* Rewrite the exits of a loop body which leave the loop: the statements
          outside of nested loops (which are already lowered). [returns]:
          whether to lower the early returns. *)
-      let rewrite_escapes ~(returns : bool) (exit : place) (b : block) :
-          block * int list =
+      let rewrite_escapes ~(returns : bool) ?(carried : place option)
+          (exit : place) (b : block) : block * int list =
         let codes = ref [] in
         let escape span (k : int) : statement list =
           if not (List.mem k !codes) then codes := k :: !codes;
-          [ set_exit span exit k; mk_statement span (Break 0) ]
+          let carry =
+            match carried with
+            | Some c when k = 1 ->
+                [
+                  mk_statement span
+                    (Assign
+                       (c, carry_value (Option.get (Lazy.force loop_carrier)) ret0));
+                ]
+            | _ -> []
+          in
+          carry @ [ set_exit span exit k; mk_statement span (Break 0) ]
         in
         let is_escape (st : statement) =
           match st.kind with
@@ -813,11 +831,19 @@ let lower_loop_exits (_ : crate) (f : fun_decl) : fun_decl =
         (b, List.sort compare !codes)
       in
       (* The dispatch after a lowered loop *)
-      let dispatch span (exit : place) (codes : int list) : statement =
-        let target (k : int) : statement_kind =
-          if k = 1 then Return
-          else if k mod 2 = 0 then Break ((k / 2) - 1)
-          else Continue ((k / 2) - 1)
+      let dispatch span (exit : place) ?(carried : place option)
+          (codes : int list) : statement =
+        let target (k : int) : statement list =
+          if k = 1 then
+            match carried with
+            | Some c ->
+                uncarry_value span
+                  (Option.get (Lazy.force loop_carrier))
+                  ret0 c
+                  [ mk_statement span Return ]
+            | None -> [ mk_statement span Return ]
+          else if k mod 2 = 0 then [ mk_statement span (Break ((k / 2) - 1)) ]
+          else [ mk_statement span (Continue ((k / 2) - 1)) ]
         in
         let data : switch_data =
           {
@@ -829,7 +855,7 @@ let lower_loop_exits (_ : crate) (f : fun_decl) : fun_decl =
         mk_statement span
           (Switch
              ( data,
-               List.map (fun k -> mk_block span [ mk_statement span (target k) ]) codes
+               List.map (fun k -> mk_block span (target k)) codes
                @ [ mk_block span [ mk_statement span Nop ] ] ))
       in
       (* Does [update_loops] handle the early returns of a loop which is not
@@ -877,22 +903,32 @@ let lower_loop_exits (_ : crate) (f : fun_decl) : fun_decl =
                (or only by duplicating code at every loop level), and the return
                value is in a carrier *)
             let returns =
-              has_carrier
+              can_lower_returns
               && (depth > 0 || not (upstream_handles_returns loop_body after))
             in
-            (* Only allocate the local if the loop has exits to lower *)
+            (* Only allocate the locals if the loop has exits to lower *)
             let scan = { kind = PlaceLocal LocalId.zero; ty = u32_ty } in
             let _, codes = rewrite_escapes ~returns scan loop_body in
             if codes = [] then [ { st with kind = Loop loop_body } ]
             else
               let span = st.span in
               let exit = fresh span "loop_exit" u32_ty in
-              let loop_body, codes = rewrite_escapes ~returns exit loop_body in
-              [
-                set_exit span exit 0;
-                { st with kind = Loop loop_body };
-                dispatch span exit codes;
-              ]
+              let carried, init =
+                match Lazy.force loop_carrier with
+                | Some c when (not has_carrier) && List.mem 1 codes ->
+                    let p = fresh span "loop_return" (carrier_ty c ret0.ty) in
+                    (Some p, [ mk_statement span (Assign (p, carrier_init c)) ])
+                | _ -> (None, [])
+              in
+              let loop_body, codes =
+                rewrite_escapes ~returns ?carried exit loop_body
+              in
+              init
+              @ [
+                  set_exit span exit 0;
+                  { st with kind = Loop loop_body };
+                  dispatch span exit ?carried codes;
+                ]
         | Switch (data, branches) ->
             [
               {
