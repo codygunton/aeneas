@@ -15,8 +15,10 @@ public import Aeneas.Std.Core.FmtWithSlice
 public import Aeneas.Std.Core.Hash
 public import Aeneas.Std.Core.Iter
 public import Aeneas.Std.Core.Marker
+public import Aeneas.Std.Core.Mem
 public import Aeneas.Std.Core.Ops
 public import Aeneas.Std.Core.Panic
 public import Aeneas.Std.Core.Pin
+public import Aeneas.Std.Core.RangeBounds
 public import Aeneas.Std.Core.Ptr
 public import Aeneas.Std.Core.Result
