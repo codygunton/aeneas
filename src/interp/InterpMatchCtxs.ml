@@ -228,6 +228,23 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
         | AEndedMutBorrow _ | AEndedSharedBorrow -> [%craise] span "Unreachable"
 
       method! visit_borrow_id _ _ = [%internal_error] span
+
+      (** Concrete borrows can only appear inside the shared values of shared
+          loans. Those values are frozen: the shared borrows they contain are
+          (copies of) borrows owned by the shared value, not by the region
+          abstraction, which can neither use nor end them (exactly like the
+          borrows inside the symbolic values of shared values, which we don't
+          register either). We thus don't register them: they don't link the
+          abstraction to the abstractions containing the corresponding loans.
+          We do not support mutable borrows there. *)
+      method! visit_borrow_content _ bc =
+        match bc with
+        | VSharedBorrow _ -> ()
+        | VMutBorrow _ | VReservedMutBorrow _ ->
+            [%craise] span
+              "Mutable borrows inside the shared values of region \
+               abstractions are not supported yet"
+
       method! visit_loan_id (abs, pm) lid = register_loan_id abs pm lid
 
       method! visit_ASymbolic (abs, _) pm proj =
@@ -470,12 +487,12 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
       ^ tavalue_to_string ~span:(Some M.span) ctx1 v1
       ^ "\n- ty1: " ^ ty_to_string ctx1 v1.ty];
 
-    (* Using ValuesUtils.value_has_borrows on purpose here: we want
+    (* Using ValuesUtils.value_has_mut_borrows on purpose here: we want
        to make explicit the fact that, though we have to pick
-       one of the two contexts (ctx0 here) to call value_has_borrows,
+       one of the two contexts (ctx0 here) to call value_has_mut_borrows,
        it doesn't matter here. *)
-    let value_has_borrows =
-      ValuesUtils.value_has_borrows (Some span) ctx0.type_ctx.type_infos
+    let value_has_mut_borrows =
+      ValuesUtils.value_has_mut_borrows (Some span) ctx0.type_ctx.type_infos
     in
 
     let match_rec = match_tvalues ctx0 ctx1 in
@@ -549,8 +566,12 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             [%ldebug "shared loans"];
             let sv = match_rec sv0 sv1 in
             let av = match_arec av0 av1 in
+            (* The shared values may contain shared borrows: those are matched
+               like any other shared borrows (see [match_shared_borrows]), and
+               don't belong to the abstraction. We don't support mutable
+               borrows below shared borrows. *)
             [%sanity_check_recover] M.recover M.span
-              (not (value_has_borrows sv.value));
+              (not (value_has_mut_borrows sv.value));
             M.match_ashared_loans match_rec ctx0 ctx1 v0.ty pm0 id0 sv0 av0
               v1.ty pm1 id1 sv1 av1 ty sv av
         | AMutLoan (pm0, id0, av0), AMutLoan (pm1, id1, av1) ->
@@ -2443,10 +2464,15 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
                 match_abstractions ~recover:true abs0 abs1;
                 [%ltrace "Found matching abs:\n" ^ abs_to_string span ctx1 abs1];
                 Some abs1
-              with Distinct _ | Errors.RFailure ->
-                (* Restore the state and continue exploring *)
-                restore_maps maps;
-                None
+              with
+              | Distinct msg ->
+                  [%ltrace "Distinct: " ^ msg];
+                  restore_maps maps;
+                  None
+              | Errors.RFailure ->
+                  (* Restore the state and continue exploring *)
+                  restore_maps maps;
+                  None
             end
         | _ -> None)
       env
