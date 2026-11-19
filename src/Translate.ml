@@ -530,8 +530,8 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
     (* Split between opaque and transparent *)
     (* Debugging aids: with [AENEAS_ONLY=<substring>], only the bodies of the
        functions whose name contains the substring are translated (the others
-       are made opaque); with [AENEAS_SKIP=<substring>], the bodies of the
-       functions whose name contains the substring are made opaque. *)
+       are made opaque); with [AENEAS_SKIP=<substring>,...], the bodies of the
+       functions whose name contains one of the substrings are made opaque. *)
     let contains s name =
       let rec go i =
         i + String.length s <= String.length name
@@ -554,7 +554,11 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
     let funs =
       match Sys.getenv_opt "AENEAS_SKIP" with
       | None -> funs
-      | Some s -> make_opaque_if_not (fun name -> not (contains s name)) funs
+      | Some s ->
+          let skipped = String.split_on_char ',' s in
+          make_opaque_if_not
+            (fun name -> not (List.exists (fun s -> contains s name) skipped))
+            funs
     in
     let opaque, transparent =
       List.partition
