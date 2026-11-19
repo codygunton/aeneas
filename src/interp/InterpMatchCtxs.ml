@@ -165,6 +165,18 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
       (binding_to_string loan_proj_to_string abs_id_to_string)
       true loan_proj_to_abs proj abs.abs_id
   in
+  let abs_has_markers (abs : abs) : bool =
+    let visitor =
+      object
+        inherit [_] iter_abs
+        method! visit_proj_marker _ pm = if pm <> PNone then raise Utils.Found
+      end
+    in
+    try
+      visitor#visit_abs () abs;
+      false
+    with Utils.Found -> true
+  in
 
   let explore_abs =
     object (self : 'self)
@@ -195,14 +207,18 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
             [%cassert] span (is_aignored child.value) "Not implemented yet";
             [%cassert] span (is_aignored given_back.value) "Not implemented yet"
         | AEndedSharedLoan (sv, child) ->
-            (* TODO: there may be a problem here, because we need the marker which was
-               in [ASharedLoan] to explore the shared value and register its loans
-               and mutable borrows. For now we check that there are none inside.
-               The shared value may contain shared borrows: we don't register
-               them (see [visit_borrow_content] below). *)
-            [%cassert] span
-              (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv))
-              "Not implemented yet";
+            (* The loans of the shared value still belong to the abstraction.
+               We need the marker which was in [ASharedLoan] to register them:
+               if the abstraction contains no markers at all, this marker was
+               [PNone] and we register them like for [ASharedLoan]. Otherwise
+               we check that there are none inside. The shared value may
+               contain shared borrows: we don't register them (see
+               [visit_borrow_content] below). *)
+            if abs_has_markers abs then
+              [%cassert] span
+                (not (tvalue_has_loans_or_mut_borrows (Some span) ctx sv))
+                "Not implemented yet"
+            else self#visit_tvalue (abs, PNone) sv;
             self#visit_tavalue (abs, pm) child
 
       (** Make sure we don't register the ignored ids *)
