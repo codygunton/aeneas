@@ -561,6 +561,18 @@ def core.ops.range.Range.Insts.DoubleEndedIterator
   next_back := core.ops.range.Range.Insts.CoreIterTraitsDoubleEndedIterator.next_back StepInst
 }
 
+/-- `RangeInclusive::size_hint` (`range.rs`): `(0, Some(0))` when empty, else
+    `steps_between + 1` (saturating / checked). -/
+@[expose, rust_fun
+  "core::iter::range::{core::iter::traits::iterator::Iterator<core::ops::range::RangeInclusive<@A>, @A>}::size_hint"]
+def core.ops.range.RangeInclusive.Insts.CoreIterTraitsIteratorIterator.size_hint
+  {A : Type _} (StepInst : core.iter.range.Step A)
+  (self : core.ops.range.RangeInclusive A) : Result (Usize × (Option Usize)) := do
+  let empty ← self.is_empty StepInst.partialOrdInst
+  if empty then .ok (0#usize, some 0#usize)
+  else
+    let (lo, hi) ← StepInst.steps_between self.start self.«end»
+    .ok (Usize.satOfNat (lo.val + 1), hi.bind fun s => Usize.checkedOfNat (s.val + 1))
 
 @[reducible,
   rust_trait_impl "core::iter::traits::iterator::Iterator<core::ops::range::RangeInclusive<@A>, @A>"]
@@ -569,6 +581,8 @@ impl_def core.ops.range.RangeInclusive.Insts.CoreIterTraitsIteratorIterator
   core.iter.traits.iterator.Iterator (core.ops.range.RangeInclusive A) A := {
   next :=
     core.ops.range.RangeInclusive.Insts.CoreIterTraitsIteratorIterator.next StepInst
+  size_hint :=
+    core.ops.range.RangeInclusive.Insts.CoreIterTraitsIteratorIterator.size_hint StepInst
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.ops.range.RangeInclusive.Insts.CoreIterTraitsIteratorIterator StepInst)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default

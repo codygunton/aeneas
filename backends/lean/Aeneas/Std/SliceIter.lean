@@ -114,11 +114,21 @@ theorem core.slice.iter.IteratorSliceIter.next_back.spec
   rw [List.getElem?_eq_getElem (by scalar_tac), Slice.getElem_Nat_eq]
   scalar_tac
 
+/-- `slice::Iter::size_hint`: exact, `(len, Some(len))` of the remaining elements. -/
+@[rust_fun
+  "core::slice::iter::{core::iter::traits::iterator::Iterator<core::slice::iter::Iter<'a, @T>, &'a @T>}::size_hint"]
+def core.slice.iter.Iter.Insts.CoreIterTraitsIteratorIteratorSharedAT.size_hint
+  {T : Type _} (it : core.slice.iter.Iter T) : Result (Std.Usize × (Option Std.Usize)) :=
+  let n := Usize.satOfNat (it.slice.val.length - it.i)
+  ok (n, some n)
+
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::slice::iter::Iter<'a, @T>, &'a @T>"]
 impl_def core.iter.traits.iterator.IteratorSliceIter (T : Type _) :
   core.iter.traits.iterator.Iterator (core.slice.iter.Iter T) T := {
   next := core.slice.iter.IteratorSliceIter.next
+  size_hint := core.slice.iter.Iter.Insts.CoreIterTraitsIteratorIteratorSharedAT.size_hint
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorSliceIter T)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default
@@ -203,12 +213,23 @@ def core.slice.iter.IteratorChunksExact.next
   | [] => ok (none, self)
   | chunk :: chunks => ok (some chunk, { chunks, remainder := self.remainder })
 
+/-- `ChunksExact::size_hint`: exact, the number of remaining full chunks. -/
+@[rust_fun
+  "core::slice::iter::{core::iter::traits::iterator::Iterator<core::slice::iter::ChunksExact<'a, @T>, &'a [@T]>}::size_hint"]
+def core.slice.iter.ChunksExact.Insts.CoreIterTraitsIteratorIteratorSharedASlice.size_hint
+  {T : Type _} (self : core.slice.iter.ChunksExact T) :
+  Result (Std.Usize × (Option Std.Usize)) :=
+  let n := Usize.satOfNat self.chunks.length
+  ok (n, some n)
+
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::slice::iter::ChunksExact<'a, @T>, &'a [@T]>"]
 impl_def core.iter.traits.iterator.IteratorChunksExact (T : Type _) :
   core.iter.traits.iterator.Iterator (core.slice.iter.ChunksExact T) (Slice T)
   := {
   next := core.slice.iter.IteratorChunksExact.next
+  size_hint := core.slice.iter.ChunksExact.Insts.CoreIterTraitsIteratorIteratorSharedASlice.size_hint
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorChunksExact T)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default

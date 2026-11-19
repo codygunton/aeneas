@@ -3,6 +3,7 @@ public import Aeneas.Std.Core.Alloc
 public import Aeneas.Std.Core.Atomic
 public import Aeneas.Std.Core.Borrow
 public import Aeneas.Std.Core.Cmp
+public import Aeneas.Std.Core.CmpExtra
 public import Aeneas.Std.Core.Convert
 public import Aeneas.Std.Core.Core
 public import Aeneas.Std.Core.CoreOption
@@ -14,11 +15,17 @@ public import Aeneas.Std.Core.Fmt
 public import Aeneas.Std.Core.FmtWithSlice
 public import Aeneas.Std.Core.Hash
 public import Aeneas.Std.Core.Iter
+public import Aeneas.Std.Core.IterAdapters
+public import Aeneas.Std.Core.IterModel
+public import Aeneas.Std.Core.IterSources
 public import Aeneas.Std.Core.Marker
 public import Aeneas.Std.Core.Mem
+public import Aeneas.Std.Core.MiscExtra
 public import Aeneas.Std.Core.Ops
+public import Aeneas.Std.Core.OptionExtra
 public import Aeneas.Std.Core.Panic
 public import Aeneas.Std.Core.Pin
 public import Aeneas.Std.Core.RangeBounds
+public import Aeneas.Std.Core.PtrExtra
 public import Aeneas.Std.Core.Ptr
 public import Aeneas.Std.Core.Result
