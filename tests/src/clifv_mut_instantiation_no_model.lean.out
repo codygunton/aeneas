@@ -7,4 +7,4 @@ Source: 'tests/src/clifv_mut_instantiation_no_model.rs', lines 22:0-26:1
 Compiler source: symbolic/SymbolicToPureExpressions.ml, line 266
 [[92mInfo[39m ] Generated the partial file (because of 2 errors, including 1 unique errors): tests/lean/ClifvMutInstantiationNoModel.lean
 [[93mWarn[39m ] The crate contains extracted external, unknown definitions: we advise using the option -split-files to allow manually providing these definitions in separate files.
-[[92mInfo[39m ] Total execution time: 0.379940 seconds
+[[92mInfo[39m ] Total execution time: 0.523090 seconds
