@@ -978,6 +978,25 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
       { f with body = StructuredBody (finish (lower_block 0 body.body)) }
   | _ -> f
 
+(** Does every execution of a block escape it (with a [break], [continue],
+    [return], a panic or undefined behavior)? *)
+let rec block_always_escapes (b : block) : bool =
+  let is_trivial (st : statement) =
+    match st.kind with
+    | StorageDead _ | StorageLive _ | Nop -> true
+    | _ -> false
+  in
+  match List.rev (List.filter (fun st -> not (is_trivial st)) b.statements) with
+  | [] -> false
+  | st :: _ -> (
+      match st.kind with
+      | Break _ | Continue _ | Return | Panic _ | UndefinedBehavior | UnwindResume
+      | UnwindTerminate _ ->
+          true
+      | Switch (_, branches) ->
+          branches <> [] && List.for_all block_always_escapes branches
+      | _ -> false)
+
 (** Move the statements following a branching into its branches which may fall
     through, when its other branches always escape (with a [break],
     [continue], [return], a panic or undefined behavior):
@@ -1005,17 +1024,7 @@ let sink_into_fallthrough_branch (_ : crate) (f : fun_decl) : fun_decl =
     | StorageDead _ | StorageLive _ | Nop -> true
     | _ -> false
   in
-  let rec always_escapes (b : block) : bool =
-    match List.rev (List.filter (fun st -> not (is_trivial st)) b.statements) with
-    | [] -> false
-    | st :: _ -> (
-        match st.kind with
-        | Break _ | Continue _ | Return | Panic _ | UndefinedBehavior
-        | UnwindResume | UnwindTerminate _ ->
-            true
-        | Switch (_, branches) -> branches <> [] && List.for_all always_escapes branches
-        | _ -> false)
-  in
+  let always_escapes = block_always_escapes in
   let max_duplicated_size = 32 in
   (* Is the number of statements in a block (nested statements included) at
      most [max]? We stop counting above [max]. *)
@@ -4857,6 +4866,11 @@ let apply_passes (crate : crate) : crate =
               let env = Print.crate_to_fmt_env crate in
               prerr_endline (what ^ ":\n" ^ Print.fun_decl_to_string env "" " " f)
             in
+            let escapes_at_end =
+              match f.body with
+              | StructuredBody body -> block_always_escapes body.body
+              | _ -> false
+            in
             let f : fun_decl =
               List.fold_left
                 (fun f (name, pass) ->
@@ -4865,6 +4879,30 @@ let apply_passes (crate : crate) : crate =
                   then print ("After the pre-pass " ^ name) f;
                   f)
                 f function_passes
+            in
+            (* Every path of a function body ends with a [return] (or a panic,
+               ...). The passes which lower escapes to flags ([join_block_escapes],
+               [lower_loop_exits]) end the body with a dispatch on a flag, whose
+               fallthrough case is unreachable but not syntactically escaping
+               (e.g. when the last escaping statements were moved into branches
+               by [sink_into_fallthrough_branch]): mark the end of the body as
+               unreachable, so that the symbolic execution doesn't reach the end
+               of the function without a [return]. *)
+            let f =
+              match f.body with
+              | StructuredBody body
+                when escapes_at_end && not (block_always_escapes body.body) ->
+                  let span = body.body.span in
+                  let b =
+                    {
+                      body.body with
+                      statements =
+                        body.body.statements
+                        @ [ mk_statement span UndefinedBehavior ];
+                    }
+                  in
+                  { f with body = StructuredBody { body with body = b } }
+              | _ -> f
             in
             if selected then print "After the pre-passes" f;
             report 1;

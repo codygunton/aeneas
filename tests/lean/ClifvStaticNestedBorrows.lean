@@ -21,34 +21,34 @@ set_option maxRecDepth 2048
 namespace clifv_static_nested_borrows
 
 /-- [clifv_static_nested_borrows::Region]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 18:0-21:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 13:0-16:1
     Visibility: public -/
 structure Region where
   id : Std.U32
   description : alloc.borrow.Cow Str String
 
 /-- [clifv_static_nested_borrows::Dfg]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 23:0-26:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 18:0-21:1
     Visibility: public -/
 structure Dfg where
   sigs : alloc.vec.Vec Std.U32
   regions : alloc.vec.Vec Region
 
 /-- [clifv_static_nested_borrows::Func]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 28:0-31:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 23:0-26:1
     Visibility: public -/
 structure Func where
   sig : Std.U32
   dfg : Dfg
 
 /-- [clifv_static_nested_borrows::Flags]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 33:0-35:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 28:0-30:1
     Visibility: public -/
 structure Flags where
   b : Bool
 
 /-- [clifv_static_nested_borrows::Err]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 37:0-40:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 32:0-35:1
     Visibility: public -/
 @[discriminant isize]
 inductive Err where
@@ -56,13 +56,13 @@ inductive Err where
 | Other : Err
 
 /-- [clifv_static_nested_borrows::SigSet]
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 42:0-44:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 37:0-39:1
     Visibility: public -/
 structure SigSet where
   v : alloc.vec.Vec Std.U32
 
 /-- [clifv_static_nested_borrows::{clifv_static_nested_borrows::SigSet}::add_ref]:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 47:4-54:5 -/
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 42:4-49:5 -/
 def SigSet.add_ref
   (self : SigSet) (i : Std.Usize) (dfg : Dfg) (flags : Flags) :
   Result ((core.result.Result Std.U32 Err) × SigSet)
@@ -82,7 +82,7 @@ def SigSet.add_ref
     ok (core.result.Result.Ok s, { v })
 
 /-- [clifv_static_nested_borrows::{clifv_static_nested_borrows::SigSet}::new]: loop body 0:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 59:8-63:5
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 54:8-58:5
     Visibility: public -/
 @[rust_loop_body]
 def SigSet.new_loop.body
@@ -107,7 +107,7 @@ def SigSet.new_loop.body
       ok (done r1)
 
 /-- [clifv_static_nested_borrows::{clifv_static_nested_borrows::SigSet}::new]: loop 0:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 59:8-63:5
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 54:8-58:5
     Visibility: public -/
 @[rust_loop]
 def SigSet.new_loop
@@ -120,7 +120,7 @@ def SigSet.new_loop
     (iter, sigs)
 
 /-- [clifv_static_nested_borrows::{clifv_static_nested_borrows::SigSet}::new]:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 56:4-63:5
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 51:4-58:5
     Visibility: public -/
 def SigSet.new
   (func : Func) (flags : Flags) : Result (core.result.Result SigSet Err) := do
@@ -130,12 +130,12 @@ def SigSet.new
     func.dfg.regions flags { v }
 
 /-- [clifv_static_nested_borrows::mk_func]:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 66:0-74:1 -/
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 61:0-69:1 -/
 def mk_func (sigs : alloc.vec.Vec Std.U32) : Result Func := do
   ok { sig := 7#u32, dfg := { sigs, regions := (alloc.vec.Vec.new Region) } }
 
 /-- [clifv_static_nested_borrows::test_sigset_ok]:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 77:0-90:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 72:0-85:1
     Visibility: public -/
 def test_sigset_ok : Result Unit := do
   let y ←
@@ -166,7 +166,7 @@ def test_sigset_ok : Result Unit := do
 #guard (test_sigset_ok).reducesTo ()
 
 /-- [clifv_static_nested_borrows::test_sigset_err]:
-    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 93:0-102:1
+    Source: 'tests/src/clifv_static_nested_borrows.rs', lines 88:0-97:1
     Visibility: public -/
 def test_sigset_err : Result Unit := do
   let y ←

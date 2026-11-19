@@ -46,12 +46,10 @@ def opt_add_1_or_panic (b : Bool) (x : Std.U32) : Result Std.U32 := do
 /-- [joins::opt_add_switch_1]:
     Source: 'tests/src/joins.rs', lines 20:0-27:1 -/
 def opt_add_switch_1 (a : Std.U32) (x : Std.U32) : Result Std.U32 := do
-  let y ←
-    match a with
-    | 0#uscalar => ok 0#u32
-    | 1#uscalar => ok 1#u32
-    | _ => fail panic
-  x + y
+  match a with
+  | 0#uscalar => x + 0#u32
+  | 1#uscalar => x + 1#u32
+  | _ => fail panic
 
 /-- [joins::opt_add_switch_2]:
     Source: 'tests/src/joins.rs', lines 29:0-35:1 -/

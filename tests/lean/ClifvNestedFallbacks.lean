@@ -57,74 +57,59 @@ def Op.Insts.CoreMarkerCopy : core.marker.Copy Op := {
 def lower (op : Op) (inner : Op) (x : Std.U32) : Result Std.U32 := do
   let (return_carrier, join_flag) ←
     if x = 1000#u32
-    then ok (0#u32, 0#u32)
+    then ok (0#u32, 2#u32)
     else
-      do
-      let (return_carrier1, join_flag1) ←
-        if x = 1001#u32
-        then ok (0#u32, 0#u32)
+      if x = 1001#u32
+      then ok (1#u32, 2#u32)
+      else
+        if x = 1002#u32
+        then ok (2#u32, 2#u32)
         else
-          do
-          let (return_carrier2, join_flag2) ←
-            if x = 1002#u32
-            then ok (0#u32, 0#u32)
-            else
-              do
-              let (return_carrier3, join_flag3) ←
-                if x = 1003#u32
-                then ok (0#u32, 0#u32)
-                else
-                  do
-                  let (y, return_carrier4, join_flag4, fallback_flag) ←
-                    match op with
-                    | Op.A =>
-                      do
-                      let (y1, return_carrier5, join_flag5, fallback_flag1) ←
-                        match inner with
-                        | Op.B =>
-                          do
-                          let (i, i1, i2) ←
-                            if x > 3#u32
-                            then
-                              do
-                              let return_carrier6 ← x - 3#u32
-                              ok (0#u32, return_carrier6, 2#u32)
-                            else ok (10#u32, 0#u32, 0#u32)
-                          ok (i, i1, i2, 0#u32)
-                        | _ => ok (0#u32, 0#u32, 0#u32, 1#u32)
-                      let i ←
-                        match fallback_flag1 with
-                        | 1#uscalar =>
-                          do
-                          let z ← lift (core.num.U32.wrapping_mul x 7#u32)
-                          ok (core.num.U32.wrapping_add z 1#u32)
-                        | _ => ok y1
-                      ok (i, return_carrier5, join_flag5, 0#u32)
-                    | _ => ok (0#u32, 0#u32, 0#u32, 1#u32)
-                  let y1 ←
-                    match fallback_flag with
-                    | 1#uscalar =>
-                      do
-                      let z ← lift (core.num.U32.wrapping_mul x 5#u32)
-                      ok (core.num.U32.wrapping_add z 2#u32)
-                    | _ => ok y
-                  match join_flag4 with
-                  | 0#uscalar =>
-                    let return_carrier5 ← y1 + 100#u32
-                    ok (return_carrier5, 2#u32)
-                  | _ => ok (return_carrier4, join_flag4)
-              match join_flag3 with
-              | 0#uscalar => ok (3#u32, 2#u32)
-              | _ => ok (return_carrier3, join_flag3)
-          match join_flag2 with
-          | 0#uscalar => ok (2#u32, 2#u32)
-          | _ => ok (return_carrier2, join_flag2)
-      match join_flag1 with
-      | 0#uscalar => ok (1#u32, 2#u32)
-      | _ => ok (return_carrier1, join_flag1)
+          if x = 1003#u32
+          then ok (3#u32, 2#u32)
+          else
+            do
+            let (y, return_carrier1, join_flag1, fallback_flag) ←
+              match op with
+              | Op.A =>
+                do
+                let (y1, return_carrier2, join_flag2, fallback_flag1) ←
+                  match inner with
+                  | Op.B =>
+                    do
+                    let (i, i1, i2) ←
+                      if x > 3#u32
+                      then
+                        do
+                        let return_carrier3 ← x - 3#u32
+                        ok (0#u32, return_carrier3, 2#u32)
+                      else ok (10#u32, 0#u32, 0#u32)
+                    ok (i, i1, i2, 0#u32)
+                  | _ => ok (0#u32, 0#u32, 0#u32, 1#u32)
+                let i ←
+                  match fallback_flag1 with
+                  | 1#uscalar =>
+                    do
+                    let z ← lift (core.num.U32.wrapping_mul x 7#u32)
+                    ok (core.num.U32.wrapping_add z 1#u32)
+                  | _ => ok y1
+                ok (i, return_carrier2, join_flag2, 0#u32)
+              | _ => ok (0#u32, 0#u32, 0#u32, 1#u32)
+            let y1 ←
+              match fallback_flag with
+              | 1#uscalar =>
+                do
+                let z ← lift (core.num.U32.wrapping_mul x 5#u32)
+                ok (core.num.U32.wrapping_add z 2#u32)
+              | _ => ok y
+            match join_flag1 with
+            | 0#uscalar =>
+              let return_carrier2 ← y1 + 100#u32
+              ok (return_carrier2, 2#u32)
+            | _ => ok (return_carrier1, join_flag1)
   match join_flag with
   | 2#uscalar => ok return_carrier
-  | _ => ok 0#u32
+  | _ => fail panic
 
 /-- [clifv_nested_fallbacks::test_lower]:
     Source: 'tests/src/clifv_nested_fallbacks.rs', lines 55:0-62:1

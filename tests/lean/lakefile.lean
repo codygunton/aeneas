@@ -36,8 +36,8 @@ package «tests» {}
 @[default_target] lean_lib ClifvForwardBreakChain
 @[default_target] lean_lib ClifvJoinDynBox
 @[default_target] lean_lib ClifvJoinInnerLoop
-@[default_target] lean_lib ClifvJoinScalarInit
 @[default_target] lean_lib ClifvJoinProjSharedBorrow
+@[default_target] lean_lib ClifvJoinScalarInit
 @[default_target] lean_lib ClifvJoinSharedLoans
 @[default_target] lean_lib ClifvLoopEarlyReturn
 @[default_target] lean_lib ClifvLoopOuterBreak
@@ -57,9 +57,10 @@ package «tests» {}
 @[default_target] lean_lib ClifvRefImplName
 @[default_target] lean_lib ClifvResultVariant
 @[default_target] lean_lib ClifvSlicePatterns
-@[default_target] lean_lib ClifvStaticSharedBorrows
 @[default_target] lean_lib ClifvStaticNestedBorrows
 @[default_target] lean_lib ClifvStaticNestedLoops
+@[default_target] lean_lib ClifvStaticRegionGlobals
+@[default_target] lean_lib ClifvStaticSharedBorrows
 @[default_target] lean_lib ClifvStdAllocCollections
 @[default_target] lean_lib ClifvStdAllocHash
 @[default_target] lean_lib ClifvStdAllocString

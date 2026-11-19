@@ -94,12 +94,8 @@ def find_pair_loop0
 def find_pair (n : Std.U32) (target : Std.U32) : Result Std.U32 := do
   let (return_carrier, loop_exit) ←
     find_pair_loop0 0#u32 n target 0#u32 0#u32
-  let join_flag ←
-    match loop_exit with
-    | 1#uscalar => ok 2#u32
-    | _ => ok 0#u32
-  match join_flag with
-  | 2#uscalar => ok return_carrier
+  match loop_exit with
+  | 1#uscalar => ok return_carrier
   | _ => ok core.num.U32.MAX
 
 /-- [clifv_nested_loop_return::test_find_pair]:
