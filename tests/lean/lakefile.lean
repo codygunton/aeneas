@@ -34,6 +34,7 @@ package «tests» {}
 @[default_target] lean_lib ClifvDeepNesting
 @[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
+@[default_target] lean_lib ClifvJoinDynBox
 @[default_target] lean_lib ClifvJoinInnerLoop
 @[default_target] lean_lib ClifvJoinScalarInit
 @[default_target] lean_lib ClifvJoinSharedLoans

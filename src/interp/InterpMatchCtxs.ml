@@ -360,16 +360,15 @@ let rec match_types (span : Meta.span) ~(recover : bool) (ctx0 : eval_ctx)
         "Not the same raw pointer types";
       let ty = match_rec ty0 ty1 in
       TRawPtr (ty, rk0)
-  | TFnPtr _, TFnPtr _ | TFnDef _, TFnDef _ ->
+  | TFnPtr _, TFnPtr _ | TFnDef _, TFnDef _ | TDynTrait _, TDynTrait _ ->
       (* We only support the case where the types are the same and don't
          contain free regions: there is then nothing to match (function
-         types appear for instance in the closures' states) *)
+         types appear for instance in the closures' states, [dyn] types for
+         instance in [Box<dyn Any>]) *)
       [%cassert_recover] recover span
         ((not (TypesUtils.ty_has_free_regions ty0)) && phys_eq ty0 ty1)
         "Not implemented yet";
       ty0
-  | TDynTrait _, TDynTrait _ ->
-      [%craise_recover] recover span "Not implemented yet"
   | TPtrMetadata ty0, TPtrMetadata ty1 ->
       let ty = match_rec ty0 ty1 in
       TPtrMetadata ty

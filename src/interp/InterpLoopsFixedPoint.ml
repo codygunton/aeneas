@@ -143,7 +143,8 @@ let compute_loop_entry_fixed_point ?(no_continue = false) (config : config)
       true
     else
       Option.is_some
-        (try_match_ctxs span ~check_equiv:true !fixed_ids lookup_shared_value
+        (try_match_ctxs span ~check_equiv:true ~diag:true !fixed_ids
+           lookup_shared_value
            lookup_shared_value ctx1 ctx2)
   in
   let max_num_iter = Config.loop_fixed_point_max_num_iters in
@@ -218,8 +219,14 @@ let compute_loop_entry_fixed_point ?(no_continue = false) (config : config)
         ^ eval_ctx_to_string ~span:(Some span) ~filter:false ctx1
         ^ "\n"];
 
-      (* Check if we reached a fixed point: if not, iterate *)
-      if equiv_ctxs i ctx ctx1 then ctx1
+      (* Check if we reached a fixed point: if not, iterate.
+
+         A loop whose body never continues is entered only once, from the
+         context at the loop entry: the joined context, which is an
+         abstraction of it, is then a fixed point and we don't need to check
+         that it is stable (the subsequent match with the context at the loop
+         entry still checks that it abstracts it). *)
+      if no_continue || equiv_ctxs i ctx ctx1 then ctx1
       else (
         joined_ctxs := ctx1 :: !joined_ctxs;
         compute_fixed_point ctx1 i0 (i - 1))
