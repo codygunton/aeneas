@@ -341,7 +341,15 @@ let rec match_types (span : Meta.span) ~(recover : bool) (ctx0 : eval_ctx)
         "Not the same raw pointer types";
       let ty = match_rec ty0 ty1 in
       TRawPtr (ty, rk0)
-  | TDynTrait _, TDynTrait _ | TFnPtr _, TFnPtr _ | TFnDef _, TFnDef _ ->
+  | TFnPtr _, TFnPtr _ | TFnDef _, TFnDef _ ->
+      (* We only support the case where the types are the same and don't
+         contain free regions: there is then nothing to match (function
+         types appear for instance in the closures' states) *)
+      [%cassert_recover] recover span
+        ((not (TypesUtils.ty_has_free_regions ty0)) && phys_eq ty0 ty1)
+        "Not implemented yet";
+      ty0
+  | TDynTrait _, TDynTrait _ ->
       [%craise_recover] recover span "Not implemented yet"
   | TPtrMetadata ty0, TPtrMetadata ty1 ->
       let ty = match_rec ty0 ty1 in
@@ -470,12 +478,12 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
       ^ tavalue_to_string ~span:(Some M.span) ctx1 v1
       ^ "\n- ty1: " ^ ty_to_string ctx1 v1.ty];
 
-    (* Using ValuesUtils.value_has_borrows on purpose here: we want
+    (* Using ValuesUtils.value_has_mut_borrows on purpose here: we want
        to make explicit the fact that, though we have to pick
-       one of the two contexts (ctx0 here) to call value_has_borrows,
+       one of the two contexts (ctx0 here) to call value_has_mut_borrows,
        it doesn't matter here. *)
-    let value_has_borrows =
-      ValuesUtils.value_has_borrows (Some span) ctx0.type_ctx.type_infos
+    let value_has_mut_borrows =
+      ValuesUtils.value_has_mut_borrows (Some span) ctx0.type_ctx.type_infos
     in
 
     let match_rec = match_tvalues ctx0 ctx1 in
@@ -549,8 +557,16 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             [%ldebug "shared loans"];
             let sv = match_rec sv0 sv1 in
             let av = match_arec av0 av1 in
+            (* The shared value may contain shared borrows (for instance, a
+               shared loan of a value containing ['static] string slices, like
+               [target_lexicon::Triple]): the matcher matches them like the
+               borrows found anywhere else (we only get there when checking
+               that two contexts are equivalent, or when mapping a context to
+               a target: the join of region abstractions is not done through
+               this function). We still forbid mutable borrows below shared
+               loans, which are not supported anyway. *)
             [%sanity_check_recover] M.recover M.span
-              (not (value_has_borrows sv.value));
+              (not (value_has_mut_borrows sv.value));
             M.match_ashared_loans match_rec ctx0 ctx1 v0.ty pm0 id0 sv0 av0
               v1.ty pm1 id1 sv1 av1 ty sv av
         | AMutLoan (pm0, id0, av0), AMutLoan (pm1, id1, av1) ->
@@ -560,11 +576,19 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             [%ldebug "mut loans: matched children values"];
             M.match_amut_loans match_rec ctx0 ctx1 v0.ty pm0 id0 av0 v1.ty pm1
               id1 av1 ty av
-        | AIgnoredMutLoan _, AIgnoredMutLoan _
-        | AIgnoredSharedLoan _, AIgnoredSharedLoan _ ->
-            (* Those should have been filtered when destructuring the abstractions -
-               they are necessary only when there are nested borrows *)
-            [%craise_recover] M.recover M.span "Unreachable"
+        | AIgnoredMutLoan (id0, child0), AIgnoredMutLoan (id1, child1) ->
+            (* Those are generally filtered when destructuring the
+               abstractions, but they remain in the abstractions which are
+               not destructured (when there are nested borrows, for instance
+               the abstraction introduced by a function call whose input
+               value contains a shared borrow of a value containing borrows) *)
+            let child = match_arec child0 child1 in
+            M.match_aignored_mut_loans match_rec ctx0 ctx1 (v0.ty, id0, child0)
+              (v1.ty, id1, child1) ty child
+        | AIgnoredSharedLoan child0, AIgnoredSharedLoan child1 ->
+            (* See the comment for [AIgnoredMutLoan] *)
+            let child = match_arec child0 child1 in
+            M.match_aignored_shared_loans match_rec ctx0 ctx1 ty child
         | _ -> [%craise_recover] M.recover M.span "Unreachable")
     | ASymbolic (pm0, proj0), ASymbolic (pm1, proj1) -> begin
         [%ldebug "Matching symbolic avalues"];
@@ -1715,6 +1739,12 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
       ty;
     }
 
+  let match_aignored_mut_loans _ _ _ _ _ _ _ =
+    [%craise_recover] S.recover span "Unreachable"
+
+  let match_aignored_shared_loans _ _ _ _ _ =
+    [%craise_recover] S.recover span "Unreachable"
+
   let match_distinct_aadts _ _ _ _ _ _ _ =
     [%craise_recover] S.recover span "Unreachable"
 
@@ -2097,6 +2127,24 @@ struct
       ty;
     }
 
+  let match_aignored_mut_loans (_match_rec : tvalue_matcher) (_ctx0 : eval_ctx)
+      (_ctx1 : eval_ctx)
+      ((_ty0, id0, _child0) : rty * loan_id option * tavalue)
+      ((_ty1, id1, _child1) : rty * loan_id option * tavalue) (ty : ty)
+      (child : tavalue) : tavalue =
+    let id =
+      match (id0, id1) with
+      | None, None -> None
+      | Some id0, Some id1 -> Some (match_loan_id id0 id1)
+      | _ -> raise (Distinct "match_aignored_mut_loans: ids")
+    in
+    { value = ALoan (AIgnoredMutLoan (id, child)); ty }
+
+  let match_aignored_shared_loans (_match_rec : tvalue_matcher)
+      (_ctx0 : eval_ctx) (_ctx1 : eval_ctx) (ty : ty) (child : tavalue) :
+      tavalue =
+    { value = ALoan (AIgnoredSharedLoan child); ty }
+
   let match_aproj_borrows (_match_values : tvalue_matcher) (ctx0 : eval_ctx)
       (ctx1 : eval_ctx) _ty0 pm0 (proj0 : aproj_borrows) _ty1 pm1
       (proj1 : aproj_borrows) ty proj_ty : tavalue =
@@ -2356,7 +2404,10 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
     in
 
     let raise_distinct msg =
-      if recover then raise Errors.RFailure else raise (Distinct msg)
+      if recover then (
+        Errors.last_recover_failure := msg;
+        raise Errors.RFailure)
+      else raise (Distinct msg)
     in
 
     let _ = match_aid abs_id0 abs_id1 in
@@ -2378,6 +2429,18 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
         "Region abstractions with distinct sets of ended sub-abstractions";
 
     [%ldebug "match_abstractions: matching values"];
+    (* The ignored values ([AIgnored]: the parts of the abstraction's input
+       and output values which don't contain any loan or borrow of the
+       abstraction's regions) carry no information: some operations remove
+       them (for instance, [project_context] filters them out of the
+       abstractions it projects), so if the numbers of values differ we
+       ignore them. *)
+    let avalues0, avalues1 =
+      if List.length avalues0 <> List.length avalues1 then
+        let keep (v : tavalue) = not (is_aignored v.value) in
+        (List.filter keep avalues0, List.filter keep avalues1)
+      else (avalues0, avalues1)
+    in
     let _ =
       if List.length avalues0 <> List.length avalues1 then
         raise_distinct "Region abstractions with not the same number of values"
@@ -2429,24 +2492,38 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
       ^ abs_to_string span ctx0 abs0
       ^ "\n\nIn environment:\n"
       ^ eval_ctx_to_string { ctx1 with env = List.rev env }];
+    let failures = ref [] in
     env_pop_binding
       (fun _ ->
-        raise (Distinct "Could not find a matching abs in right environment"))
+        raise
+          (Distinct
+             ("Could not find a matching abs in right environment for abs@"
+             ^ AbsId.to_string abs0.abs_id
+             ^ " (tried: "
+             ^ String.concat ", " (List.rev !failures)
+             ^ ")")))
       (fun e ->
         match e with
         | EAbs abs1 ->
             (* Save the maps to make sure we can backtrack *)
             let maps = save_maps () in
+            let failed msg =
+              failures := ("abs@" ^ AbsId.to_string abs1.abs_id ^ ": " ^ msg)
+                          :: !failures;
+              (* Restore the state and continue exploring *)
+              restore_maps maps;
+              None
+            in
             (* Attempt matching *)
             begin
               try
                 match_abstractions ~recover:true abs0 abs1;
                 [%ltrace "Found matching abs:\n" ^ abs_to_string span ctx1 abs1];
                 Some abs1
-              with Distinct _ | Errors.RFailure ->
-                (* Restore the state and continue exploring *)
-                restore_maps maps;
-                None
+              with
+              | Distinct msg -> failed msg
+              | Errors.RFailure ->
+                  failed ("RFailure: " ^ !Errors.last_recover_failure)
             end
         | _ -> None)
       env
@@ -2601,9 +2678,16 @@ let match_ctxs (span : Meta.span) ~(check_equiv : bool)
 
 let try_match_ctxs (span : Meta.span) ~(check_equiv : bool)
     ?(check_kind : bool = true) ?(check_can_end : bool = true)
+    ?(diag : bool = false)
     (fixed_ids : ids_sets) (lookup_shared_value_in_ctx0 : BorrowId.id -> tvalue)
     (lookup_shared_value_in_ctx1 : BorrowId.id -> tvalue) (ctx0 : eval_ctx)
     (ctx1 : eval_ctx) : ids_maps option =
+  (* Debugging aid: with [AENEAS_MATCH_DIAG] set, print why the match failed *)
+  let diag msg =
+    if diag && Sys.getenv_opt "AENEAS_MATCH_DIAG" <> None then
+      prerr_endline
+        ("match_ctxs failed at " ^ Errors.raw_span_to_string span ^ ": " ^ msg)
+  in
   try
     Some
       (match_ctxs span ~check_equiv ~check_kind ~check_can_end ~recoverable:true
@@ -2612,12 +2696,15 @@ let try_match_ctxs (span : Meta.span) ~(check_equiv : bool)
   with
   | Distinct msg ->
       [%ltrace "distinct: " ^ msg];
+      diag ("Distinct: " ^ msg);
       None
   | ValueMatchFailure k ->
       [%ltrace "distinct: ValueMatchFailure" ^ show_updt_env_kind k];
+      diag ("ValueMatchFailure: " ^ show_updt_env_kind k);
       None
   | Errors.RFailure ->
       [%ltrace "unexpected failure"];
+      diag ("RFailure: " ^ !Errors.last_recover_failure);
       None
 
 let ctxs_are_equivalent (span : Meta.span) (fixed_ids : ids_sets)

@@ -439,6 +439,24 @@ module type PrimMatcher = sig
     tavalue ->
     tavalue
 
+  (** Match two ignored mutable loans ([AIgnoredMutLoan]): the loan ids and
+      the children values (the last [tavalue] is the result of matching the
+      children). *)
+  val match_aignored_mut_loans :
+    tvalue_matcher ->
+    eval_ctx ->
+    eval_ctx ->
+    rty * loan_id option * tavalue ->
+    rty * loan_id option * tavalue ->
+    ty ->
+    tavalue ->
+    tavalue
+
+  (** Match two ignored shared loans ([AIgnoredSharedLoan]): the last
+      [tavalue] is the result of matching the children. *)
+  val match_aignored_shared_loans :
+    tvalue_matcher -> eval_ctx -> eval_ctx -> ty -> tavalue -> tavalue
+
   (** Parameters:
       - [match_values]
       - [ctx0]

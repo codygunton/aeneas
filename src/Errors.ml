@@ -159,9 +159,16 @@ let cassert (file : string) (line : int) (span : Meta.span) (b : bool)
     (msg : string) =
   cassert_opt_span file line (Some span) b msg
 
+(** The origin ([file:line: msg]) of the last recoverable failure: a debugging
+    aid to explain the failures which were recovered from *)
+let last_recover_failure : string ref = ref ""
+
 let craise_recover_opt_span (file : string) (line : int) (recover : bool)
     (span : Meta.span option) (msg : string) =
-  if recover then raise RFailure else craise_opt_span file line span msg
+  if recover then (
+    last_recover_failure := file ^ ":" ^ string_of_int line ^ ": " ^ msg;
+    raise RFailure)
+  else craise_opt_span file line span msg
 
 let craise_recover (file : string) (line : int) (recover : bool)
     (span : Meta.span) (msg : string) =

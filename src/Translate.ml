@@ -549,7 +549,11 @@ let translate_crate_to_pure (crate : crate) (marked_ids : marked_ids) :
     let funs =
       match Sys.getenv_opt "AENEAS_ONLY" with
       | None -> funs
-      | Some s -> make_opaque_if_not (contains s) funs
+      | Some s ->
+          let keep = String.split_on_char '|' s in
+          make_opaque_if_not
+            (fun name -> List.exists (fun s -> contains s name) keep)
+            funs
     in
     let funs =
       match Sys.getenv_opt "AENEAS_SKIP" with

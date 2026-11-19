@@ -95,6 +95,7 @@ val try_match_ctxs :
   check_equiv:bool ->
   ?check_kind:bool ->
   ?check_can_end:bool ->
+  ?diag:bool ->
   ids_sets ->
   (loan_id -> tvalue) ->
   (loan_id -> tvalue) ->
