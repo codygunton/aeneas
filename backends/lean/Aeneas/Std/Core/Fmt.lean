@@ -632,7 +632,9 @@ theorem core.result.Result.unwrap.step_spec
   | .Ok v, ⟨_, rfl⟩ =>
     simp [core.result.Result.unwrap, WP.spec_ok]
 
--- TODO: add pattern once we support partial monomorphization
+/-- `Result::<&mut T, E>::unwrap`: the unwrapped value, and the backward function which gives back
+    the result holding the value written through the borrow. -/
+@[expose, rust_fun "core::result::{core::result::Result<@T, @E>}::unwrap<&'a mut @T, @E>"]
 def core.result.Result.unwrap.mut {T E : Type _}
   (_ : core.fmt.Debug E) (e : core.result.Result T E) : Std.Result (T × (T → core.result.Result T E)) :=
   match e with

@@ -153,6 +153,19 @@ def core.option.Option.Insts.CoreOpsTry_traitTry.branch {T : Type _} :
     | some v => ok (.Continue v)
     | none => ok (.Break none)
 
+/-- `Try for Option<&mut T>`: `branch`, and the backward function which gives back the option
+    holding the value written through the borrow (`Break` gives back the input option, which is
+    `None`). -/
+@[rust_fun "core::option::{core::ops::try_trait::Try<core::option::Option<@T>>}::branch<&'a mut @T>"]
+def core.option.Option.Insts.CoreOpsTry_traitTry.branch.mut {T : Type _} :
+  Option T → Result (core.ops.control_flow.ControlFlow (Option Never) T ×
+    (core.ops.control_flow.ControlFlow (Option Never) T → Option T)) :=
+  fun o => match o with
+    | some v => ok (.Continue v, fun cf => match cf with
+      | .Continue v => some v
+      | .Break _ => o)
+    | none => ok (.Break none, fun _ => none)
+
 @[rust_fun
   "core::option::{core::ops::try_trait::FromResidual<core::option::Option<@T>, core::option::Option<!>>}::from_residual"]
 def core.option.Option.Insts.CoreOpsTry_traitFromResidualOptionNever.from_residual (T : Type _) :

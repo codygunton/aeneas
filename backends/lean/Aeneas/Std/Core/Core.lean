@@ -80,6 +80,14 @@ theorem core.option.Option.unwrap.spec {T : Type _} (x : Option T) (h : x.isSome
   unwrap x ⦃ v => x = some v ⦄ := by
   simp only [unwrap, ofOption]; grind
 
+/-- `Option::<&mut T>::unwrap`: the unwrapped value, and the backward function which gives back
+    the option holding the value written through the borrow. -/
+@[expose, rust_fun "core::option::{core::option::Option<@T>}::unwrap<&'a mut @T>"]
+def core.option.Option.unwrap.mut {T : Type _} (x : Option T) : Result (T × (T → Option T)) :=
+  match x with
+  | some v => ok (v, fun v => some v)
+  | none => fail .panic
+
 @[expose, step_pure_def, rust_fun "core::option::{core::option::Option<@T>}::unwrap_or" -canFail]
 def core.option.Option.unwrap_or (self : Option T) (default : T) : T :=
   match self with

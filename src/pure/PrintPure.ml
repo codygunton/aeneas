@@ -867,7 +867,7 @@ let pure_builtin_fun_id_to_string (fid : pure_builtin_fun_id) : string =
       | Slice -> "@sliceIndexMut"
     end
   | Discriminant -> "@discriminant"
-  | ResultUnwrapMut -> "@resultUnwrapMut"
+  | ModelInstantiation (_, name) -> "@modelInstantiation(" ^ name ^ ")"
   | GetTarget -> "@getTarget"
   | TargetFeatureEnabled -> "@targetFeatureEnabled"
 

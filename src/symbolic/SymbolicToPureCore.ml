@@ -13,6 +13,9 @@ let match_name_find_opt = TranslateCore.match_name_find_opt
 let match_name_with_generics_find_opt =
   TranslateCore.match_name_with_generics_find_opt
 
+let match_name_instantiation_find_opt =
+  TranslateCore.match_name_instantiation_find_opt
+
 type type_ctx = {
   llbc_type_decls : T.type_decl TypeDeclId.Map.t;
   type_decls : type_decl TypeDeclId.Map.t;
