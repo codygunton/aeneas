@@ -5,7 +5,9 @@
 // Cranelift's `enc_acq_rel` (cranelift/codegen/src/isa/aarch64/inst/emit.rs):
 // locals defined by matches (`let sz = match ty {..}`), whose branchings the
 // join pre-passes rewrite with flags (`init_join_scalars`). With
-// `--code-duplication-limit 2`, as in the Cranelift extraction.
+// `--code-duplication-limit 2`, as in the Cranelift extraction. And
+// `InstructionData::branch_destination` (cranelift/codegen/src/ir/instructions.rs):
+// a reference defined by a match with a wide fallback, which is not hoisted.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Type(u16);
@@ -64,9 +66,59 @@ pub fn enc_acq_rel(ty: Type, op: AtomicRMWOp, rs: u32, rt: u32, rn: u32) -> u32 
         | gpr(rt)
 }
 
+pub enum Inst {
+    Jump { dest: [u32; 1] },
+    Brif { blocks: [u32; 2] },
+    A0,
+    A1,
+    A2,
+    A3,
+    A4,
+    A5,
+    A6,
+    A7,
+    A8,
+    A9,
+}
+
+impl Inst {
+    pub fn code(&self) -> u32 {
+        match self {
+            Inst::Jump { .. } => 0,
+            Inst::Brif { .. } => 1,
+            _ => 2,
+        }
+    }
+
+    pub fn branch_destination(&self) -> &[u32] {
+        match self {
+            Inst::Jump { dest } => &dest[..],
+            Inst::Brif { blocks } => &blocks[..],
+            _ => {
+                assert!(self.code() == 2);
+                &[]
+            }
+        }
+    }
+}
+
+pub fn dest_sum(i: &Inst) -> u32 {
+    let d = i.branch_destination();
+    let mut s = 0;
+    let mut k = 0;
+    while k < d.len() {
+        s += d[k];
+        k += 1;
+    }
+    s
+}
+
 #[verify::test]
 pub fn test_enc_acq_rel() {
     assert!(enc_acq_rel(I64, AtomicRMWOp::Swp, 1, 2, 3) == 0xf8e18062);
     assert!(enc_acq_rel(I32, AtomicRMWOp::Add, 4, 5, 6) == 0xb8e400c5);
     assert!(enc_acq_rel(I8, AtomicRMWOp::Umin, 7, 8, 9) == 0x38e77128);
+    assert!(dest_sum(&Inst::Jump { dest: [5] }) == 5);
+    assert!(dest_sum(&Inst::Brif { blocks: [5, 6] }) == 11);
+    assert!(dest_sum(&Inst::A3) == 0);
 }

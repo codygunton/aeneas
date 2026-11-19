@@ -21,61 +21,61 @@ set_option maxRecDepth 2048
 namespace clifv_join_scalar_init
 
 /-- [clifv_join_scalar_init::Type]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 11:0-11:21
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 13:0-13:21
     Visibility: public -/
 @[reducible]
 def «Type» := Std.U16
 
 /-- [clifv_join_scalar_init::{impl core::clone::Clone for clifv_join_scalar_init::Type}::clone]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:9-10:14
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:9-12:14
     Visibility: public -/
 def Type.Insts.CoreCloneClone.clone (self : «Type») : Result «Type» := do
   ok self
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::clone::Clone for clifv_join_scalar_init::Type}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:9-10:14 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:9-12:14 -/
 @[reducible]
 def Type.Insts.CoreCloneClone : core.clone.Clone «Type» := {
   clone := Type.Insts.CoreCloneClone.clone
 }
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::marker::Copy for clifv_join_scalar_init::Type}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:16-10:20 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:16-12:20 -/
 @[reducible]
 def Type.Insts.CoreMarkerCopy : core.marker.Copy «Type» := {
   cloneInst := Type.Insts.CoreCloneClone
 }
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::marker::StructuralPartialEq for clifv_join_scalar_init::Type}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:22-10:31 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:22-12:31 -/
 @[reducible]
 def Type.Insts.CoreMarkerStructuralPartialEq : core.marker.StructuralPartialEq
   «Type» := {
 }
 
 /-- [clifv_join_scalar_init::{impl core::cmp::PartialEq<clifv_join_scalar_init::Type> for clifv_join_scalar_init::Type}::eq]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:22-10:31
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:22-12:31
     Visibility: public -/
 def Type.Insts.CoreCmpPartialEqType.eq
   (self : «Type») (other : «Type») : Result Bool := do
   ok (self = other)
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::cmp::PartialEq<clifv_join_scalar_init::Type> for clifv_join_scalar_init::Type}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:22-10:31 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:22-12:31 -/
 @[reducible]
 def Type.Insts.CoreCmpPartialEqType : core.cmp.PartialEq «Type» «Type» := {
   eq := Type.Insts.CoreCmpPartialEqType.eq
 }
 
 /-- [clifv_join_scalar_init::{impl core::cmp::Eq for clifv_join_scalar_init::Type}::assert_fields_are_eq]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:33-10:35
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:33-12:35
     Visibility: public -/
 def Type.Insts.CoreCmpEq.assert_fields_are_eq
   (self : «Type») : Result Unit := do
   ok ()
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::cmp::Eq for clifv_join_scalar_init::Type}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 10:33-10:35 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:33-12:35 -/
 @[reducible]
 def Type.Insts.CoreCmpEq : core.cmp.Eq «Type» := {
   partialEqInst := Type.Insts.CoreCmpPartialEqType
@@ -83,27 +83,27 @@ def Type.Insts.CoreCmpEq : core.cmp.Eq «Type» := {
 }
 
 /-- [clifv_join_scalar_init::I8]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 12:0-12:32
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 14:0-14:32
     Visibility: public -/
 @[global_simps, irreducible] def I8 : «Type» := 116#u16
 
 /-- [clifv_join_scalar_init::I16]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 13:0-13:33
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 15:0-15:33
     Visibility: public -/
 @[global_simps, irreducible] def I16 : «Type» := 117#u16
 
 /-- [clifv_join_scalar_init::I32]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 14:0-14:33
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 16:0-16:33
     Visibility: public -/
 @[global_simps, irreducible] def I32 : «Type» := 118#u16
 
 /-- [clifv_join_scalar_init::I64]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 15:0-15:33
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:0-17:33
     Visibility: public -/
 @[global_simps, irreducible] def I64 : «Type» := 119#u16
 
 /-- [clifv_join_scalar_init::AtomicRMWOp]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 18:0-28:1
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 20:0-30:1
     Visibility: public -/
 @[discriminant isize]
 inductive AtomicRMWOp where
@@ -118,35 +118,35 @@ inductive AtomicRMWOp where
 | Swp : AtomicRMWOp
 
 /-- [clifv_join_scalar_init::{impl core::clone::Clone for clifv_join_scalar_init::AtomicRMWOp}::clone]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:9-17:14
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:9-19:14
     Visibility: public -/
 def AtomicRMWOp.Insts.CoreCloneClone.clone
   (self : AtomicRMWOp) : Result AtomicRMWOp := do
   ok self
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::clone::Clone for clifv_join_scalar_init::AtomicRMWOp}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:9-17:14 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:9-19:14 -/
 @[reducible]
 def AtomicRMWOp.Insts.CoreCloneClone : core.clone.Clone AtomicRMWOp := {
   clone := AtomicRMWOp.Insts.CoreCloneClone.clone
 }
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::marker::Copy for clifv_join_scalar_init::AtomicRMWOp}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:16-17:20 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:16-19:20 -/
 @[reducible]
 def AtomicRMWOp.Insts.CoreMarkerCopy : core.marker.Copy AtomicRMWOp := {
   cloneInst := AtomicRMWOp.Insts.CoreCloneClone
 }
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::marker::StructuralPartialEq for clifv_join_scalar_init::AtomicRMWOp}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:22-17:31 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:22-19:31 -/
 @[reducible]
 def AtomicRMWOp.Insts.CoreMarkerStructuralPartialEq :
   core.marker.StructuralPartialEq AtomicRMWOp := {
 }
 
 /-- [clifv_join_scalar_init::{impl core::cmp::PartialEq<clifv_join_scalar_init::AtomicRMWOp> for clifv_join_scalar_init::AtomicRMWOp}::eq]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:22-17:31
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:22-19:31
     Visibility: public -/
 def AtomicRMWOp.Insts.CoreCmpPartialEqAtomicRMWOp.eq
   (self : AtomicRMWOp) (other : AtomicRMWOp) : Result Bool := do
@@ -155,7 +155,7 @@ def AtomicRMWOp.Insts.CoreCmpPartialEqAtomicRMWOp.eq
   ok (self1 = other1)
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::cmp::PartialEq<clifv_join_scalar_init::AtomicRMWOp> for clifv_join_scalar_init::AtomicRMWOp}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:22-17:31 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:22-19:31 -/
 @[reducible]
 def AtomicRMWOp.Insts.CoreCmpPartialEqAtomicRMWOp : core.cmp.PartialEq
   AtomicRMWOp AtomicRMWOp := {
@@ -163,7 +163,7 @@ def AtomicRMWOp.Insts.CoreCmpPartialEqAtomicRMWOp : core.cmp.PartialEq
 }
 
 /-- Trait implementation: [clifv_join_scalar_init::{impl core::cmp::Eq for clifv_join_scalar_init::AtomicRMWOp}]
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 17:33-17:35 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 19:33-19:35 -/
 @[reducible]
 impl_def AtomicRMWOp.Insts.CoreCmpEq : core.cmp.Eq AtomicRMWOp := {
   partialEqInst := AtomicRMWOp.Insts.CoreCmpPartialEqAtomicRMWOp
@@ -172,12 +172,12 @@ impl_def AtomicRMWOp.Insts.CoreCmpEq : core.cmp.Eq AtomicRMWOp := {
 }
 
 /-- [clifv_join_scalar_init::gpr]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 30:0-32:1 -/
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 32:0-34:1 -/
 def gpr (r : Std.U32) : Result Std.U32 := do
   ok (r &&& 31#u32)
 
 /-- [clifv_join_scalar_init::enc_acq_rel]: loop 0:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 35:4-41:27
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 37:4-43:27
     Visibility: public -/
 @[rust_loop]
 def enc_acq_rel_loop (ty : «Type») (i : Std.U32) : Result Std.U32 := do
@@ -190,7 +190,7 @@ def enc_acq_rel_loop (ty : «Type») (i : Std.U32) : Result Std.U32 := do
   | _ => fail panic
 
 /-- [clifv_join_scalar_init::enc_acq_rel]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 34:0-65:1
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 36:0-67:1
     Visibility: public -/
 def enc_acq_rel
   (ty : «Type») (op : AtomicRMWOp) (rs : Std.U32) (rt : Std.U32)
@@ -233,8 +233,85 @@ def enc_acq_rel
   let i13 ← gpr rt
   ok (i12 ||| i13)
 
+/-- [clifv_join_scalar_init::Inst]
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 69:0-82:1
+    Visibility: public -/
+@[discriminant isize]
+inductive Inst where
+| Jump : Array Std.U32 1#usize → Inst
+| Brif : Array Std.U32 2#usize → Inst
+| A0 : Inst
+| A1 : Inst
+| A2 : Inst
+| A3 : Inst
+| A4 : Inst
+| A5 : Inst
+| A6 : Inst
+| A7 : Inst
+| A8 : Inst
+| A9 : Inst
+
+/-- [clifv_join_scalar_init::{clifv_join_scalar_init::Inst}::code]:
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 85:4-91:5
+    Visibility: public -/
+def Inst.code (self : Inst) : Result Std.U32 := do
+  match self with
+  | Inst.Jump _ => ok 0#u32
+  | Inst.Brif _ => ok 1#u32
+  | _ => ok 2#u32
+
+/-- [clifv_join_scalar_init::{clifv_join_scalar_init::Inst}::branch_destination]:
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 93:4-102:5
+    Visibility: public -/
+def Inst.branch_destination (self : Inst) : Result (Slice Std.U32) := do
+  match self with
+  | Inst.Jump dest =>
+    core.array.Array.index (core.ops.index.IndexSlice
+      (core.slice.index.SliceIndexRangeFullSlice Std.U32)) dest ()
+  | Inst.Brif blocks =>
+    core.array.Array.index (core.ops.index.IndexSlice
+      (core.slice.index.SliceIndexRangeFullSlice Std.U32)) blocks ()
+  | _ =>
+    let i ← Inst.code self
+    massert (i = 2#u32)
+    ok (Array.to_slice (Std.Array.empty Std.U32))
+
+/-- [clifv_join_scalar_init::dest_sum]: loop body 0:
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 109:4-112:5
+    Visibility: public -/
+@[rust_loop_body]
+def dest_sum_loop.body
+  (d : Slice Std.U32) (s : Std.U32) (k : Std.Usize) :
+  Result (ControlFlow (Std.U32 × Std.Usize) Std.U32)
+  := do
+  let i := Slice.len d
+  if k < i
+  then
+    let i1 ← Slice.index_usize d k
+    let s1 ← s + i1
+    let k1 ← k + 1#usize
+    ok (cont (s1, k1))
+  else ok (done s)
+
+/-- [clifv_join_scalar_init::dest_sum]: loop 0:
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 109:4-112:5
+    Visibility: public -/
+@[rust_loop]
+def dest_sum_loop
+  (d : Slice Std.U32) (s : Std.U32) (k : Std.Usize) : Result Std.U32 := do
+  loop
+    (fun (s1, k1) => dest_sum_loop.body d s1 k1)
+    (s, k)
+
+/-- [clifv_join_scalar_init::dest_sum]:
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 105:0-114:1
+    Visibility: public -/
+def dest_sum (i : Inst) : Result Std.U32 := do
+  let d ← Inst.branch_destination i
+  dest_sum_loop d 0#u32 0#usize
+
 /-- [clifv_join_scalar_init::test_enc_acq_rel]:
-    Source: 'tests/src/clifv_join_scalar_init.rs', lines 68:0-72:1
+    Source: 'tests/src/clifv_join_scalar_init.rs', lines 117:0-124:1
     Visibility: public -/
 def test_enc_acq_rel : Result Unit := do
   let i ← enc_acq_rel I64 AtomicRMWOp.Swp 1#u32 2#u32 3#u32
@@ -243,6 +320,12 @@ def test_enc_acq_rel : Result Unit := do
   massert (i1 = 3101950149#u32)
   let i2 ← enc_acq_rel I8 AtomicRMWOp.Umin 7#u32 8#u32 9#u32
   massert (i2 = 954691880#u32)
+  let i3 ← dest_sum (Inst.Jump (Array.make 1#usize [ 5#u32 ]))
+  massert (i3 = 5#u32)
+  let i4 ← dest_sum (Inst.Brif (Array.make 2#usize [ 5#u32, 6#u32 ]))
+  massert (i4 = 11#u32)
+  let i5 ← dest_sum Inst.A3
+  massert (i5 = 0#u32)
 
 /- Unit test for [clifv_join_scalar_init::test_enc_acq_rel] -/
 #guard (test_enc_acq_rel).reducesTo ()

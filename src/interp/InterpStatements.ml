@@ -1536,7 +1536,10 @@ and eval_function_call_symbolic_from_inst_sig (config : config)
           ^ " doesn't have the proper type:\n- arg: " ^ tvalue_to_string ctx arg
           ^ "\n- arg.ty: " ^ ty_to_string ctx arg.ty ^ "\n- target type: "
           ^ ty_to_string ctx rty];
-        [%craise] span "The input arguments don't have the proper type"))
+        [%craise] span
+          ("The input arguments don't have the proper type: argument "
+         ^ string_of_int i ^ " has type " ^ ty_to_string ctx arg.ty
+         ^ ", expected " ^ ty_to_string ctx rty)))
     args_with_rtypes;
   (* Check that the input arguments don't contain symbolic values that can't
    * be fed to functions (i.e., symbolic values output from function return

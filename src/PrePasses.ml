@@ -1158,6 +1158,73 @@ let has_wide_fallback_match (crate : crate) (body : expr_body) : bool =
     false
   with Utils.Found -> true
 
+(** The local of a place which is a whole local *)
+let whole_local (p : place) : LocalId.id option =
+  match p.kind with
+  | PlaceLocal id -> Some id
+  | _ -> None
+
+(** Count the reads of locals in a statement: all their occurrences but the
+    whole destinations of assignments and calls, and the storage markers *)
+let count_local_reads (counts : int LocalId.Map.t ref) (st : statement) : unit
+    =
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+
+      method! visit_local_id _ id =
+        counts :=
+          LocalId.Map.update id
+            (fun n -> Some (1 + Option.value n ~default:0))
+            !counts
+
+      method! visit_statement env st =
+        match st.kind with
+        | Assign (p, rv) when Option.is_some (whole_local p) ->
+            super#visit_rvalue env rv
+        | Call (call, p, unwind) when Option.is_some (whole_local p) ->
+            super#visit_call env call;
+            super#visit_block env unwind
+        | StorageLive _ | StorageDead _ -> ()
+        | _ -> super#visit_statement env st
+    end
+  in
+  visitor#visit_statement () st
+
+let local_reads (stl : statement list) : int LocalId.Map.t =
+  let counts = ref LocalId.Map.empty in
+  List.iter (count_local_reads counts) stl;
+  !counts
+
+let reads_of (counts : int LocalId.Map.t) (id : LocalId.id) : int =
+  Option.value (LocalId.Map.find_opt id counts) ~default:0
+
+(** The locals assigned as a whole in some blocks *)
+let assigned_locals (blocks : block list) : LocalId.Set.t =
+  let acc = ref LocalId.Set.empty in
+  let visitor =
+    object
+      inherit [_] iter_statement as super
+
+      method! visit_statement env st =
+        (match st.kind with
+        | Assign (p, _) | Call (_, p, _) -> (
+            match whole_local p with
+            | Some id -> acc := LocalId.Set.add id !acc
+            | None -> ())
+        | _ -> ());
+        super#visit_statement env st
+    end
+  in
+  List.iter (visitor#visit_block ()) blocks;
+  !acc
+
+(** Is a type an integer or a boolean (see [init_join_scalars])? *)
+let is_int_or_bool_ty (ty : ty) : bool =
+  match ty with
+  | TScalar (TInteger _ | TBool) -> true
+  | _ -> false
+
 (** Evaluate the fallback branch of a match on an enumeration only once.
 
     The symbolic execution expands the scrutinee of a match into every variant
@@ -1172,17 +1239,42 @@ let has_wide_fallback_match (crate : crate) (body : expr_body) : bool =
     branch after the match:
     [flag := 0; match x { ..., _ => flag := 1 }; if flag == 1 { fallback }].
     We only do so in functions whose return value is in a carrier (see
-    [ret_to_carrier]) or with such matches (see [has_wide_fallback_match]). *)
+    [ret_to_carrier]) or with such matches (see [has_wide_fallback_match]).
+
+    The contexts of the other branches are joined with the one of the
+    fallback stub, in which the locals that the other branches initialize are
+    uninitialized: after the join they are uninitialized ([Bottom]) on every
+    path. [init_join_scalars] gives such integer and boolean locals an initial
+    value; we don't hoist the fallback of a match whose other branches
+    initialize a local of another type which is read after the match (e.g.
+    [let r: &[T] = match x { A => .., _ => &[] }]). *)
 let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body
     when Option.is_some (find_return_carrier body)
          || has_wide_fallback_match crate body ->
       let fresh, finish = fresh_locals body in
+      let has_carrier = Option.is_some (find_return_carrier body) in
       let is_trivial (st : statement) =
         match st.kind with
         | StorageDead _ | StorageLive _ | Nop -> true
         | _ -> false
+      in
+      let total_reads = local_reads body.body.statements in
+      let local_ty id = (List.nth body.locals.locals (LocalId.to_int id)).local_ty in
+      (* Does a branch other than the fallback initialize a local (which
+         [init_join_scalars] doesn't handle) read after the match? With a
+         carrier, the return value is moved into the carrier right after being
+         assigned. *)
+      let loses_values (st : statement) (fb_index : int) (branches : block list) =
+        let others = List.filteri (fun i _ -> i <> fb_index) branches in
+        let inside = local_reads [ st ] in
+        LocalId.Set.exists
+          (fun id ->
+            (not (is_int_or_bool_ty (local_ty id)))
+            && (not (has_carrier && id = LocalId.zero))
+            && reads_of total_reads id > reads_of inside id)
+          (assigned_locals others)
       in
       let update (st : statement) : statement list =
         match st.kind with
@@ -1190,7 +1282,8 @@ let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
             (({ scrutinee = SwitchDiscriminant _; fallback = Some fb; _ } as data),
               branches)
           when (not (List.for_all is_trivial (List.nth branches (BranchId.to_int fb)).statements))
-               && not (List.exists block_has_break_continue_return branches)
+               && (not (List.exists block_has_break_continue_return branches))
+               && not (loses_values st (BranchId.to_int fb) branches)
           ->
             let span = st.span in
             let flag = fresh span "fallback_flag" u32_ty in
@@ -1236,13 +1329,13 @@ let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
     [flag := 0; match op { Swp => b := 1, _ => flag := 1 };
      if flag == 1 { b := 0 }], after which [b] is [Bottom].
 
-    For every integer or boolean local [l] (other than the return value and
-    the arguments) which is assigned in a branch of a branching or in the body
-    of a loop, and read outside of that statement, we insert [l := 0] (or
-    [false]) at the function entry and right after every [StorageLive l]. At
-    those points [l] is uninitialized, and the borrow checker guarantees that
-    every read of [l] is preceded by an assignment on every path: the inserted
-    value is never observed, except on the paths which the flags rule out. *)
+    For every integer or boolean local [l] (other than the arguments) which is
+    assigned in a branch of a branching or in the body of a loop, and read
+    outside of that statement, we insert [l := 0] (or [false]) at the function
+    entry and right after every [StorageLive l]. At those points [l] is
+    uninitialized, and the borrow checker guarantees that every read of [l] is
+    preceded by an assignment on every path: the inserted value is never
+    observed, except on the paths which the flags rule out. *)
 let init_join_scalars (crate : crate) (f : fun_decl) : fun_decl =
   match f.body with
   | StructuredBody body ->
@@ -1257,81 +1350,18 @@ let init_join_scalars (crate : crate) (f : fun_decl) : fun_decl =
       if not (List.exists is_flag body.locals.locals) then f
       else
         let candidate (l : local) =
-          LocalId.to_int l.index > body.locals.arg_count
+          (l.index = LocalId.zero
+          || LocalId.to_int l.index > body.locals.arg_count)
           && (not (is_flag l))
-          &&
-          match l.local_ty with
-          | TScalar (TInteger _ | TBool) -> true
-          | _ -> false
+          && is_int_or_bool_ty l.local_ty
         in
         let candidates =
           List.fold_left
-            (fun s (l : local) -> if candidate l then LocalId.Set.add l.index s else s)
+            (fun s (l : local) ->
+              if candidate l then LocalId.Set.add l.index s else s)
             LocalId.Set.empty body.locals.locals
         in
-        let whole_dest (p : place) =
-          match p.kind with
-          | PlaceLocal id -> Some id
-          | _ -> None
-        in
-        (* Count the reads (all the occurrences but the whole destinations) of
-           the candidates in a statement *)
-        let count_reads (counts : int LocalId.Map.t ref) : statement -> unit =
-          let incr id =
-            if LocalId.Set.mem id candidates then
-              counts :=
-                LocalId.Map.update id
-                  (fun n -> Some (1 + Option.value n ~default:0))
-                  !counts
-          in
-          let visitor =
-            object
-              inherit [_] iter_statement as super
-              method! visit_local_id _ id = incr id
-
-              method! visit_statement env st =
-                match st.kind with
-                | Assign (p, rv) when Option.is_some (whole_dest p) ->
-                    super#visit_rvalue env rv
-                | Call (call, p, unwind) when Option.is_some (whole_dest p) ->
-                    super#visit_call env call;
-                    super#visit_block env unwind
-                | StorageLive _ | StorageDead _ -> ()
-                | _ -> super#visit_statement env st
-            end
-          in
-          visitor#visit_statement ()
-        in
-        let reads_in (st : statement) : int LocalId.Map.t =
-          let counts = ref LocalId.Map.empty in
-          count_reads counts st;
-          !counts
-        in
-        let total =
-          let counts = ref LocalId.Map.empty in
-          List.iter (count_reads counts) body.body.statements;
-          !counts
-        in
-        let assigned_in (blocks : block list) : LocalId.Set.t =
-          let acc = ref LocalId.Set.empty in
-          let visitor =
-            object
-              inherit [_] iter_statement as super
-
-              method! visit_statement env st =
-                (match st.kind with
-                | Assign (p, _) | Call (_, p, _) -> (
-                    match whole_dest p with
-                    | Some id when LocalId.Set.mem id candidates ->
-                        acc := LocalId.Set.add id !acc
-                    | _ -> ())
-                | _ -> ());
-                super#visit_statement env st
-            end
-          in
-          List.iter (visitor#visit_block ()) blocks;
-          !acc
-        in
+        let total = local_reads body.body.statements in
         let selected = ref LocalId.Set.empty in
         let visitor =
           object
@@ -1344,13 +1374,14 @@ let init_join_scalars (crate : crate) (f : fun_decl) : fun_decl =
                 | Loop b -> [ b ]
                 | _ -> []
               in
-              let assigned = assigned_in blocks in
+              let assigned =
+                LocalId.Set.inter candidates (assigned_locals blocks)
+              in
               (if not (LocalId.Set.is_empty assigned) then
-                 let inside = reads_in st in
-                 let n id m = Option.value (LocalId.Map.find_opt id m) ~default:0 in
+                 let inside = local_reads [ st ] in
                  LocalId.Set.iter
                    (fun id ->
-                     if n id total > n id inside then
+                     if reads_of total id > reads_of inside id then
                        selected := LocalId.Set.add id !selected)
                    assigned);
               super#visit_statement env st
@@ -1362,9 +1393,9 @@ let init_join_scalars (crate : crate) (f : fun_decl) : fun_decl =
           let init span (id : LocalId.id) : statement =
             let ty = (List.nth body.locals.locals (LocalId.to_int id)).local_ty in
             let c =
-              match Option.get (value_carrier crate ty) with
-              | `Scalar c -> c
-              | `Option _ -> [%internal_error] span
+              match value_carrier crate ty with
+              | Some (`Scalar c) -> c
+              | _ -> [%internal_error] span
             in
             mk_statement span
               (Assign ({ kind = PlaceLocal id; ty }, Use (Constant c, NoRetag)))
