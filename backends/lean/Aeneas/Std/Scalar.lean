@@ -6,6 +6,9 @@ public import Aeneas.Std.Scalar.CheckedOps
 public import Aeneas.Std.Scalar.CloneCopy
 public import Aeneas.Std.Scalar.Core
 public import Aeneas.Std.Scalar.CoreConvertNum
+public import Aeneas.Std.Scalar.CoreConvertInt
+public import Aeneas.Std.Scalar.CoreNum
+public import Aeneas.Std.Scalar.CoreNumParse
 public import Aeneas.Std.Scalar.Default
 public import Aeneas.Std.Scalar.Display
 public import Aeneas.Std.Scalar.DivCeil

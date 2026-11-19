@@ -556,6 +556,14 @@ and translate_function_call_aux (call : S.call) (e : S.expr) (ctx : bs_ctx) :
         | _ -> [%craise] ctx.span "Unreachable")
     | S.Unop (E.Neg overflow) -> (
         match args with
+        | [ { ty = TLiteral (TFloat fty); _ } ] ->
+            (* IEEE negation: cannot fail *)
+            let effect_info =
+              { can_fail = false; can_diverge = false; is_rec = false }
+            in
+            let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+            let dest = mk_tpat_from_fvar dest_mplace dest in
+            (ctx, Unop (FNeg fty), effect_info, args, [], dest)
         | [ arg ] ->
             let int_ty = ty_as_integer ctx.span arg.ty in
             (* Note that negation can lead to an overflow and thus fail (it
@@ -640,6 +648,33 @@ and translate_function_call_aux (call : S.call) (e : S.expr) (ctx : bs_ctx) :
                 texpr_to_string ctx e ^ " : " ^ pure_ty_to_string ctx e.ty)
               args];
         match args with
+        | [ ({ ty = TLiteral (TFloat fty); _ } as arg0); arg1 ] ->
+            (* IEEE operations: they never fail *)
+            [%sanity_check] ctx.span (arg0.ty = arg1.ty);
+            let effect_info =
+              { can_fail = false; can_diverge = false; is_rec = false }
+            in
+            let ctx, dest = fresh_var_for_symbolic_value call.dest ctx in
+            let dest = mk_tpat_from_fvar dest_mplace dest in
+            let binop =
+              match binop with
+              | Expressions.Add _ -> FAdd fty
+              | Expressions.Sub _ -> FSub fty
+              | Expressions.Mul _ -> FMul fty
+              | Expressions.Div _ -> FDiv fty
+              | Expressions.Rem _ -> FRem fty
+              | Expressions.Eq -> Eq arg0.ty
+              | Expressions.Ne -> Ne arg0.ty
+              | Expressions.Lt -> Lt (TFloat fty)
+              | Expressions.Le -> Le (TFloat fty)
+              | Expressions.Ge -> Ge (TFloat fty)
+              | Expressions.Gt -> Gt (TFloat fty)
+              | _ ->
+                  [%craise] ctx.span
+                    ("Unsupported binary operation on floats: "
+                    ^ binop_to_string binop)
+            in
+            (ctx, Binop binop, effect_info, args, [], dest)
         | [ arg0; arg1 ] ->
             let effect_info =
               {

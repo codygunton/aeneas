@@ -946,6 +946,10 @@ let unop_name (unop : unop) : string =
       match backend () with
       | Lean -> "-."
       | _ -> int_name int_ty ^ "_neg")
+  | FNeg fty -> (
+      match backend () with
+      | Lean -> float_name fty ^ ".neg"
+      | _ -> float_name fty ^ "_neg")
   | ArrayToSlice -> (
       match backend () with
       | Lean -> "Std.Array.to_slice"
@@ -964,7 +968,23 @@ let named_binop_name (binop : binop) : string =
     | Lean -> int_name int_ty ^ "."
     | FStar | Coq | HOL4 -> int_name int_ty ^ "_"
   in
+  let add_float_name fty op =
+    match backend () with
+    | Lean -> float_name fty ^ "." ^ op
+    | FStar | Coq | HOL4 -> float_name fty ^ "_" ^ op
+  in
   match binop with
+  | FAdd fty -> add_float_name fty "add"
+  | FSub fty -> add_float_name fty "sub"
+  | FMul fty -> add_float_name fty "mul"
+  | FDiv fty -> add_float_name fty "div"
+  | FRem fty -> add_float_name fty "rem"
+  | Lt (TFloat fty) -> add_float_name fty "lt"
+  | Le (TFloat fty) -> add_float_name fty "le"
+  | Ge (TFloat fty) -> add_float_name fty "ge"
+  | Gt (TFloat fty) -> add_float_name fty "gt"
+  | Eq (TLiteral (TFloat fty)) -> add_float_name fty "eq"
+  | Ne (TLiteral (TFloat fty)) -> add_float_name fty "ne"
   | Div (_, ty) -> add_int_name ty ^ "div"
   | Rem (_, ty) -> add_int_name ty ^ "rem"
   | Add (_, ty) -> add_int_name ty ^ "add"

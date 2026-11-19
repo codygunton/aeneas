@@ -116,6 +116,9 @@ let literal_to_tvalue (span : Meta.span) (ty : scalar_type) (cv : literal)
       [%sanity_check] span (int_ty = sv_ty);
       [%sanity_check] span (check_integer_value_in_range min_ptr_size sv);
       { value = VLiteral (VScalar sv); ty = TScalar ty }
+  | TFloat fty, VFloat fv ->
+      [%sanity_check] span (fty = fv.float_ty);
+      { value = VLiteral (VFloat fv); ty = TScalar ty }
   (* Remaining cases (invalid) *)
   | _, _ -> [%craise] span "Improperly typed constant value"
 
@@ -1004,6 +1007,7 @@ let eval_unary_op_symbolic (config : config) (span : Meta.span) (unop : unop)
         | Not, (TScalar (TInteger (Unsigned _)) as lty) -> lty
         | Neg OPanic, (TScalar (TInteger (Signed _)) as lty) -> lty
         | Neg OPanic, (TScalar (TInteger (Unsigned _)) as lty) -> lty
+        | Neg _, (TScalar (TFloat _) as lty) -> lty
         | Cast (CastScalar tgt_ty), _ -> TScalar tgt_ty
         | Cast (CastUnsize (ty1, _, _)), ty0 ->
             (* If the following function succeeds, then it means the cast is well-formed
@@ -1207,6 +1211,12 @@ let eval_binary_op_symbolic (config : config) (span : Meta.span) (binop : binop)
                  than the operand *)
               TScalar (integer_as_scalar int_ty1)
           | Ne | Eq -> [%craise] span "Unreachable")
+      | TScalar (TFloat fty1), TScalar (TFloat fty2) -> (
+          [%sanity_check] span (fty1 = fty2);
+          match binop with
+          | Lt | Le | Ge | Gt -> TScalar TBool
+          | Add _ | Sub _ | Mul _ | Div _ | Rem _ -> TScalar (TFloat fty1)
+          | _ -> [%craise] span "Unsupported binary operation on floats")
       | _ -> [%craise] span "Invalid inputs for binop"
   in
   let res_sv = { sv_id = res_sv_id; sv_ty = res_sv_ty } in
