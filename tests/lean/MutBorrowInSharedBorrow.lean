@@ -18,17 +18,7 @@ set_option maxHeartbeats 1000000
 /- You can set the `maxRecDepth` value with the `-max-recdepth` CLI option -/
 set_option maxRecDepth 2048
 
-/- You can remove the following line by using the CLI option `-all-computable`: -/
-noncomputable section
-
 namespace mut_borrow_in_shared_borrow
-
-/-- [core::slice::{[T]}::first]:
-    Source: '/rustc/library/core/src/slice/mod.rs', lines 157:4-157:43
-    Name pattern: [core::slice::{[@T]}::first]
-    Visibility: public -/
-@[rust_fun "core::slice::{[@T]}::first"]
-axiom core.slice.Slice.first {T : Type _} : Slice T → Result (Option T)
 
 /-- [mut_borrow_in_shared_borrow::MutFieldAccessViaShared]
     Source: 'tests/src/mut-borrow-in-shared-borrow.rs', lines 15:0-17:1 -/

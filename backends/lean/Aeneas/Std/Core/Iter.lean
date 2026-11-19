@@ -31,6 +31,19 @@ structure core.iter.range.Step (Self : Type _) where
 
 open Result
 
+/-- Saturating conversion from `Nat` (models `usize::saturating_*` results). -/
+def Usize.satOfNat (n : Nat) : Usize :=
+  if h : n ≤ Usize.max then Usize.ofNatCore n (by scalar_tac)
+  else Usize.ofNatCore Usize.max (by scalar_tac)
+
+/-- Checked conversion from `Nat` (models `usize::checked_*` results). -/
+def Usize.checkedOfNat (n : Nat) : Option Usize :=
+  if h : n ≤ Usize.max then some (Usize.ofNatCore n (by scalar_tac)) else none
+
+/-- Conversion from `Nat` failing with an integer overflow (models `+` with overflow checks). -/
+def Usize.ofNatOverflow (n : Nat) : Result Usize :=
+  if h : n ≤ Usize.max then ok (Usize.ofNatCore n (by scalar_tac)) else fail .integerOverflow
+
 @[rust_trait "core::iter::adapters::zip::TrustedRandomAccessNoCoerce"
   (consts := ["MAY_HAVE_SIDE_EFFECT"])]
 structure core.iter.adapters.zip.TrustedRandomAccessNoCoerce (Self : Type u)
@@ -93,6 +106,8 @@ def core.iter.traits.iterator.Iterator.take.default
 structure core.iter.traits.iterator.Iterator (Self : Type _) (Self_Item : Type _)
   where
   next : Self → Result ((Option Self_Item) × Self)
+  /-- `Iterator::size_hint`; the default is the trait's provided `(0, None)`. -/
+  size_hint : Self → Result (Usize × (Option Usize)) := fun _ => .ok (0#usize, none)
   step_by : Self → Usize → Result (core.iter.adapters.step_by.StepBy Self) := core.iter.traits.iterator.Iterator.step_by.default
   enumerate : Self → Result (core.iter.adapters.enumerate.Enumerate Self) := core.iter.traits.iterator.Iterator.enumerate.default
   take : Self → Usize → Result (core.iter.adapters.take.Take Self) := core.iter.traits.iterator.Iterator.take.default
@@ -103,6 +118,14 @@ structure core.iter.traits.iterator.Iterator (Self : Type _) (Self_Item : Type _
   -- `Iterator` to `SimpleIterator`.
   -- rev : Self → Result (core.iter.adapters.rev.Rev Self) -- this leads to a circularity
   -- TODO: collect
+
+/-- `Iterator::size_hint` provided method: `(0, None)`. -/
+@[trait_default, rust_fun "core::iter::traits::iterator::Iterator::size_hint"]
+def core.iter.traits.iterator.Iterator.size_hint.default
+  {Self : Type _} {Clause0_Item : Type _}
+  (_IteratorInst : core.iter.traits.iterator.Iterator Self Clause0_Item) :
+  Self → Result (Std.Usize × (Option Std.Usize)) :=
+  fun _ => .ok (0#usize, none)
 
 @[trait_default, rust_fun "core::iter::traits::iterator::Iterator::step_by"]
 def core.iter.traits.iterator.Iterator.step_by.trait_default
@@ -155,12 +178,29 @@ def core.iter.adapters.step_by.IteratorStepBy.next
       let iter ← core.iter.adapters.step_by.skipN IteratorInst iter (self.step_by.val - 1)
       .ok (some item, { iter, step_by := self.step_by })
 
+/-- `StepBy::size_hint` (`step_by.rs`, `first_size`/`other_size`). The model skips the
+    `step - 1` elements right after yielding (where Rust skips them lazily, before the next
+    yield), so the remaining count of the inner iterator always needs `first_size`:
+    `n ↦ if n = 0 then 0 else 1 + (n - 1) / step`. -/
+@[rust_fun
+  "core::iter::adapters::step_by::{core::iter::traits::iterator::Iterator<core::iter::adapters::step_by::StepBy<@I>, @Clause0_Item>}::size_hint"]
+def core.iter.adapters.step_by.IteratorStepBy.size_hint
+  {I : Type _} {Item : Type _}
+  (IteratorInst : core.iter.traits.iterator.Iterator I Item)
+  (self : core.iter.adapters.step_by.StepBy I) : Result (Usize × (Option Usize)) := do
+  let (lo, hi) ← IteratorInst.size_hint self.iter
+  let step := self.step_by.val
+  let f := fun (n : Usize) =>
+    if n.val = 0 then 0#usize else Usize.satOfNat (1 + (n.val - 1) / step)
+  .ok (f lo, hi.map f)
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::iter::adapters::step_by::StepBy<@I>, @Clause0_Item>"]
 impl_def core.iter.traits.iterator.IteratorStepBy {I : Type _} {Item : Type _}
   (IteratorInst : core.iter.traits.iterator.Iterator I Item) :
   core.iter.traits.iterator.Iterator (core.iter.adapters.step_by.StepBy I) Item := {
   next := core.iter.adapters.step_by.IteratorStepBy.next IteratorInst
+  size_hint := core.iter.adapters.step_by.IteratorStepBy.size_hint IteratorInst
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorStepBy IteratorInst)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default
@@ -552,12 +592,24 @@ def core.iter.adapters.enumerate.IteratorEnumerate.next
       let count' ← self.count + 1#usize
       ok (some (self.count, a), { iter := iter', count := count' })
 
+/-- `Enumerate::size_hint`: the inner iterator's. -/
+@[rust_fun
+  "core::iter::adapters::enumerate::{core::iter::traits::iterator::Iterator<core::iter::adapters::enumerate::Enumerate<@I>, (usize, @Clause0_Item)>}::size_hint"]
+def core.iter.adapters.enumerate.Enumerate.Insts.CoreIterTraitsIteratorIteratorPairUsizeClause0_Item.size_hint
+  {I : Type _} {Clause0_Item : Type _}
+  (traitsiteratorIteratorInst : core.iter.traits.iterator.Iterator I Clause0_Item) :
+  core.iter.adapters.enumerate.Enumerate I → Result (Std.Usize × (Option Std.Usize)) :=
+  fun self => traitsiteratorIteratorInst.size_hint self.iter
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::iter::adapters::enumerate::Enumerate<@I>, (usize, @Clause0_Item)>"]
 impl_def core.iter.traits.iterator.IteratorEnumerate {I : Type _} {Item : Type _}
     (IteratorInst : core.iter.traits.iterator.Iterator I Item) :
     core.iter.traits.iterator.Iterator (core.iter.adapters.enumerate.Enumerate I) (Usize × Item) := {
   next := core.iter.adapters.enumerate.IteratorEnumerate.next IteratorInst
+  size_hint :=
+    core.iter.adapters.enumerate.Enumerate.Insts.CoreIterTraitsIteratorIteratorPairUsizeClause0_Item.size_hint
+    IteratorInst
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorEnumerate IteratorInst)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default
@@ -585,12 +637,31 @@ def core.iter.adapters.take.IteratorTake.next
     let (opt, iter') ← IteratorInst.next self.iter
     ok (opt, { iter := iter', n := n' })
 
+/-- `Take::size_hint` (`take.rs`). -/
+@[rust_fun
+  "core::iter::adapters::take::{core::iter::traits::iterator::Iterator<core::iter::adapters::take::Take<@I>, @Clause0_Item>}::size_hint"]
+def core.iter.adapters.take.Take.Insts.CoreIterTraitsIteratorIterator.size_hint
+  {I : Type _} {Clause0_Item : Type _}
+  (traitsiteratorIteratorInst : core.iter.traits.iterator.Iterator I Clause0_Item) :
+  core.iter.adapters.take.Take I → Result (Std.Usize × (Option Std.Usize)) :=
+  fun self =>
+    if self.n.val = 0 then ok (0#usize, some 0#usize)
+    else do
+      let (lower, upper) ← traitsiteratorIteratorInst.size_hint self.iter
+      let lower := if lower.val ≤ self.n.val then lower else self.n
+      let upper := match upper with
+        | some x => if x.val < self.n.val then some x else some self.n
+        | none => some self.n
+      ok (lower, upper)
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::iter::adapters::take::Take<@I>, @Clause0_Item>"]
 impl_def core.iter.traits.iterator.IteratorTake {I : Type _} {Item : Type _}
     (IteratorInst : core.iter.traits.iterator.Iterator I Item) :
     core.iter.traits.iterator.Iterator (core.iter.adapters.take.Take I) Item := {
   next := core.iter.adapters.take.IteratorTake.next IteratorInst
+  size_hint := core.iter.adapters.take.Take.Insts.CoreIterTraitsIteratorIterator.size_hint
+    IteratorInst
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorTake IteratorInst)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default
@@ -614,12 +685,23 @@ def core.iter.range.IteratorRange.next
       | some n => ok ⟨ some range', {range with start := n} ⟩
     else ok ⟨ none, range ⟩
 
+/-- `Range::size_hint` (`range.rs`): `steps_between` when `start < end`, else `(0, Some(0))`. -/
+@[rust_fun
+  "core::iter::range::{core::iter::traits::iterator::Iterator<core::ops::range::Range<@A>, @A>}::size_hint"]
+def core.ops.range.Range.Insts.CoreIterTraitsIteratorIterator.size_hint
+  {A : Type _} (StepInst : core.iter.range.Step A) :
+  core.ops.range.Range A → Result (Std.Usize × (Option Std.Usize)) :=
+  fun r => do
+    let lt ← StepInst.partialOrdInst.lt r.start r.«end»
+    if lt then StepInst.steps_between r.start r.«end» else ok (0#usize, some 0#usize)
+
 @[reducible, rust_trait_impl
   "core::iter::traits::iterator::Iterator<core::ops::range::Range<@A>, @A>"]
 impl_def core.iter.traits.iterator.IteratorRange {A : Type _}
   (StepInst : core.iter.range.Step A) : core.iter.traits.iterator.Iterator
   (core.ops.range.Range A) A := {
   next := core.iter.range.IteratorRange.next StepInst
+  size_hint := core.ops.range.Range.Insts.CoreIterTraitsIteratorIterator.size_hint StepInst
   step_by := core.iter.traits.iterator.Iterator.step_by.trait_default
     (core.iter.traits.iterator.IteratorRange StepInst)
   enumerate := core.iter.traits.iterator.Iterator.enumerate.trait_default
