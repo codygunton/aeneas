@@ -364,7 +364,8 @@ def test_btree_map : Result Unit := do
        do
        let v2 ← v + 1#u32
        ok (fun vm2 => next_back vm2 (some v2)) : Result
-      (alloc.collections.btree.map.ValuesMut Std.U32 Std.U32))
+      (alloc.collections.btree.map.ValuesMut Std.U32 Std.U32 →
+      alloc.collections.btree.map.ValuesMut Std.U32 Std.U32))
   let vm2 := back vm1
   let m5 := values_mut_back vm2
   let o12 ←

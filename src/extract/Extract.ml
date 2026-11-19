@@ -1467,7 +1467,8 @@ and extract_lets (span : Meta.span) (ctx : extraction_ctx) (fmt : F.formatter)
           F.pp_print_space fmt ();
           F.pp_print_string fmt ":";
           F.pp_print_space fmt ();
-          extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside:false re.ty;
+          extract_ty span ctx fmt TypeDeclId.TreeSet.empty ~inside:false
+            (mk_result_ty lv.ty);
           F.pp_print_string fmt ")");
         F.pp_close_box fmt ();
         (ctx, end_let)
