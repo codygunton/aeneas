@@ -385,8 +385,13 @@ let analyze_full_ty (span : Meta.span option) (updated : bool ref)
     | TAdt { id = adt_id; generics; builtin = None } ->
         (* Lookup the information for this type definition *)
         let adt_info =
-          [%silent_unwrap_opt_span] span
-            (TypeDeclId.TreeMap.find_opt adt_id infos)
+          match TypeDeclId.TreeMap.find_opt adt_id infos with
+          | Some info -> info
+          | None ->
+              [%craise_opt_span] span
+                ("Missing the analysis of the type declaration "
+                ^ TypeDeclId.to_string adt_id
+                ^ " (it should be analyzed before the types using it)")
         in
         (* Update the type info with the information from the adt *)
         let ty_info = update_ty_info ty_info None adt_info.borrows_info in
