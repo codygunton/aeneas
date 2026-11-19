@@ -322,6 +322,22 @@ let rec copy_value (span : Meta.span) (allow_adt_copy : bool) (config : config)
               (*mk_abs rid [ sv; updated_sv; copied_sv ]*))
             regions
         in
+        (* Like in the regions hierarchy of a function call, the abstraction of
+           the static region has the other abstractions as parents (see
+           [InterpJoin.reborrow_symbolic_borrows]) *)
+        let abs =
+          let region_abs =
+            List.filter_map
+              (fun (a : abs) -> if abs_owns_static a then None else Some a.abs_id)
+              abs
+          in
+          List.map
+            (fun (a : abs) ->
+              if abs_owns_static a then
+                { a with parents = AbsId.Set.of_list region_abs }
+              else a)
+            abs
+        in
         let abs = List.map (fun a -> EAbs a) (List.rev abs) in
         let ctx = { ctx with env = abs @ ctx.env } in
         (* Create the continuation: we need to introduce intermediate let-bindings *)

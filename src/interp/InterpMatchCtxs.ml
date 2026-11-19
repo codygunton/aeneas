@@ -756,7 +756,7 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
     let sv_s = tvalue_as_symbolic span sv in
 
     (* Project the ADTs into different region abstractions *)
-    let project (r : region) =
+    let project (parents : AbsId.Set.t) (r : region) : AbsId.id =
       let regions = RegionSet.singleton r in
       let avl0, output0 =
         convert_value_to_output_avalues span ctx0 PLeft v0 regions
@@ -841,7 +841,7 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
           abs_id = ctx0.fresh_abs_id ();
           kind = S.fresh_abs_kind;
           can_end = true;
-          parents = AbsId.Set.empty;
+          parents;
           regions = { owned = regions };
           ended_subabs = AbsLevelSet.empty;
           avalues = avl0 @ avl1 @ [ av ];
@@ -849,17 +849,22 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
         }
       in
       [%ldebug "Pushing abs:\n" ^ abs_to_string span ctx0 abs];
-      push_abs abs
+      push_abs abs;
+      abs.abs_id
     in
-    List.iter (fun rid -> project (RVar (Free rid))) fresh_regions;
+    let region_abs =
+      List.map (fun rid -> project AbsId.Set.empty (RVar (Free rid))) fresh_regions
+    in
     (* The static region is not refreshed: if the type contains it (note that
        it may be hidden in an ADT, see {!TypesUtils.adt_has_hidden_static}) we
-       also need to introduce an abstraction for the static region. *)
+       also need to introduce an abstraction for the static region. Like in the
+       regions hierarchy of a function call, it has the abstractions of the
+       other regions as parents (see [InterpJoin.reborrow_symbolic_borrows]). *)
     if
       ty_has_regions_in_set ctx0.type_ctx.type_infos
         (RegionSet.singleton RStatic)
         ty_with_regions
-    then project RStatic;
+    then ignore (project (AbsId.Set.of_list region_abs) RStatic);
 
     (* *)
     sv
@@ -1479,7 +1484,9 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
         let avalues = [ proj_s0; proj_s1; proj_svj ] in
         (* Note that the static region is not refreshed: if the type contains it
            (it may be hidden in an ADT, see {!TypesUtils.adt_has_hidden_static})
-           we also need to introduce an abstraction for the static region. *)
+           we also need to introduce an abstraction for the static region. It
+           comes last and has the other abstractions as parents (see
+           [InterpJoin.reborrow_symbolic_borrows]). *)
         let regions =
           List.map (fun rid -> RVar (Free rid)) fresh_regions
           @
@@ -1490,8 +1497,9 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
           then [ RStatic ]
           else []
         in
-        List.iter
-          (fun r ->
+        ignore
+          (List.fold_left
+          (fun region_abs r ->
             let owned = RegionSet.singleton r in
             (* The abstraction expression continuation *)
             let cont : abs_cont option =
@@ -1540,15 +1548,18 @@ module MakeJoinMatcher (S : MatchJoinState) : PrimMatcher = struct
                 abs_id = ctx0.fresh_abs_id ();
                 kind = S.fresh_abs_kind;
                 can_end = true;
-                parents = AbsId.Set.empty;
+                parents =
+                  (if r = RStatic then AbsId.Set.of_list region_abs
+                   else AbsId.Set.empty);
                 regions = { owned };
                 ended_subabs = AbsLevelSet.empty;
                 avalues;
                 cont;
               }
             in
-            push_abs abs)
-          regions;
+            push_abs abs;
+            abs.abs_id :: region_abs)
+          [] regions);
         svj)
       else
         (* Otherwise we simply introduce a fresh symbolic value, or reuse a

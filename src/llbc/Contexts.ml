@@ -411,11 +411,25 @@ let env_find_abs (env : env) (pred : abs -> bool) : abs option =
 let env_lookup_abs_opt (env : env) (abs_id : AbsId.id) : abs option =
   env_find_abs env (fun abs -> abs.abs_id = abs_id)
 
+(** Update the parent sets of the abstractions of the current frame (until the
+    first [EFrame]). *)
+let rec env_map_frame_abs_parents (f : AbsId.Set.t -> AbsId.Set.t) (env : env)
+    : env =
+  match env with
+  | [] | EFrame :: _ -> env
+  | EBinding (bv, v) :: env ->
+      EBinding (bv, v) :: env_map_frame_abs_parents f env
+  | EAbs abs :: env ->
+      EAbs { abs with parents = f abs.parents }
+      :: env_map_frame_abs_parents f env
+
 (** Remove an abstraction from the context, as well as all the references to
     this abstraction (for instance, remove the abs id from all the parent sets
-    of all the other abstractions). *)
+    of all the other abstractions, which may appear before or after it in the
+    environment). *)
 let env_remove_abs (span : Meta.span) (env : env) (abs_id : AbsId.id) :
     env * abs option =
+  let update_parents = AbsId.Set.remove abs_id in
   let rec remove (env : env) : env * abs option =
     match env with
     | [] -> [%craise] span "Unreachable"
@@ -424,11 +438,12 @@ let env_remove_abs (span : Meta.span) (env : env) (abs_id : AbsId.id) :
         let env, abs_opt = remove env in
         (EBinding (bv, v) :: env, abs_opt)
     | EAbs abs :: env ->
-        if abs.abs_id = abs_id then (env, Some abs)
+        if abs.abs_id = abs_id then
+          (env_map_frame_abs_parents update_parents env, Some abs)
         else
           let env, abs_opt = remove env in
           (* Update the parents set *)
-          let parents = AbsId.Set.remove abs_id abs.parents in
+          let parents = update_parents abs.parents in
           (EAbs { abs with parents } :: env, abs_opt)
   in
   remove env
@@ -438,9 +453,16 @@ let env_remove_abs (span : Meta.span) (env : env) (abs_id : AbsId.id) :
     Note that we substitute an abstraction (identified by its id) with a
     different abstraction which **doesn't necessarily have the same id**.
     Because of this, we also substitute the abstraction id wherever it is used
-    (i.e., in the parent sets of the other abstractions). *)
+    (i.e., in the parent sets of the other abstractions, which may appear before
+    or after it in the environment). *)
 let env_subst_abs (span : Meta.span) (env : env) (abs_id : AbsId.id)
     (nabs : abs) : env * abs option =
+  let update_parents parents =
+    if AbsId.Set.mem abs_id parents then
+      let parents = AbsId.Set.remove abs_id parents in
+      AbsId.Set.add nabs.abs_id parents
+    else parents
+  in
   let rec update (env : env) : env * abs option =
     match env with
     | [] -> [%craise] span "Unreachable"
@@ -449,17 +471,12 @@ let env_subst_abs (span : Meta.span) (env : env) (abs_id : AbsId.id)
         let env, opt_abs = update env in
         (EBinding (bv, v) :: env, opt_abs)
     | EAbs abs :: env ->
-        if abs.abs_id = abs_id then (EAbs nabs :: env, Some abs)
+        if abs.abs_id = abs_id then
+          (EAbs nabs :: env_map_frame_abs_parents update_parents env, Some abs)
         else
           let env, opt_abs = update env in
           (* Update the parents set *)
-          let parents = abs.parents in
-          let parents =
-            if AbsId.Set.mem abs_id parents then
-              let parents = AbsId.Set.remove abs_id parents in
-              AbsId.Set.add nabs.abs_id parents
-            else parents
-          in
+          let parents = update_parents abs.parents in
           (EAbs { abs with parents } :: env, opt_abs)
   in
   update env

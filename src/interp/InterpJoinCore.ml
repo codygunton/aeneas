@@ -760,7 +760,14 @@ let tavalue_add_marker (span : Meta.span) (ctx : eval_ctx) (pm : proj_marker)
   let obj =
     object
       inherit [_] map_tavalue as super
-      method! visit_borrow_content _ _ = [%craise] span "Unexpected borrow"
+      method! visit_borrow_content _ bc =
+        (* Shared borrows can appear in shared values, like the symbolic values
+           containing shared borrows (see [visit_symbolic_value]) *)
+        match bc with
+        | VSharedBorrow _ -> bc
+        | VMutBorrow _ | VReservedMutBorrow _ ->
+            [%craise] span "Unexpected borrow"
+
       method! visit_loan_content _ _ = [%craise] span "Unexpected loan"
 
       method! visit_proj_marker _ pm =
@@ -815,7 +822,13 @@ let tevalue_add_marker (span : Meta.span) (ctx : eval_ctx) (pm : proj_marker)
   let obj =
     object (self)
       inherit [_] map_tavalue as super
-      method! visit_borrow_content _ _ = [%craise] span "Unexpected borrow"
+      method! visit_borrow_content _ bc =
+        (* See [tavalue_add_marker] *)
+        match bc with
+        | VSharedBorrow _ -> bc
+        | VMutBorrow _ | VReservedMutBorrow _ ->
+            [%craise] span "Unexpected borrow"
+
       method! visit_loan_content _ _ = [%craise] span "Unexpected loan"
 
       method! visit_proj_marker _ pm =

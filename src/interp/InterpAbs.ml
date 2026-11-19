@@ -671,8 +671,12 @@ let tavalue_split_marker (span : Meta.span) (ctx : eval_ctx) (av : tavalue) :
           mk_opt_split pm mk_value
       | ASharedLoan (pm, bids, sv, child) ->
           [%sanity_check] span (is_aignored child.value);
+          (* The shared value is duplicated in the two halves: this is fine if
+             it only contains shared borrows (they belong to the frozen shared
+             value, not to the abstraction, and can be freely duplicated or
+             dropped), but not if it contains mutable borrows. *)
           [%sanity_check] span
-            (not (value_has_borrows (Some span) ctx sv.value));
+            (not (value_has_mut_borrows (Some span) ctx sv.value));
           let mk_value pm =
             { av with value = ALoan (ASharedLoan (pm, bids, sv, child)) }
           in

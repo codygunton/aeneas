@@ -68,7 +68,99 @@ let reborrow_ashared_loans (span : Meta.span) (loop_id : LoopId.id option)
       v
   in
 
+  (* The symbolic values of a duplicated shared value are fresh: the borrows
+     they contain which don't belong to the reborrowed region abstraction
+     (nested borrows of other regions, including the static region, which may
+     be hidden in ADTs) need loans projectors, otherwise expanding them would
+     introduce shared borrows whose loans can't be found. As in
+     [reborrow_symbolic_borrows], we refresh those regions in the type of the
+     fresh symbolic value and introduce, for each fresh region (and for the
+     static region), an abstraction which reborrows the corresponding borrows
+     of the original symbolic value. We only do so for shared borrows (those
+     abstractions don't have any computational content); mutable borrows are
+     left as they are (expanding them fails). *)
   let fresh_absl = ref [] in
+  let track_copied_symbolic_loans (kind : abs_kind) (cont : abs_cont option)
+      (nrid : RegionId.id) (v : tvalue) : tvalue =
+    let type_infos = ctx.type_ctx.type_infos in
+    let region_is_live rid =
+      rid <> nrid && not (RegionId.Set.mem rid ctx.ended_regions)
+    in
+    let visitor =
+      object
+        inherit [_] map_tvalue as super
+
+        method! visit_VSymbolic env (nsv : symbolic_value) =
+          let fresh_regions, ty =
+            ty_refresh_regions (Some span)
+              ~region_is_live:(Some region_is_live) ctx.fresh_region_id
+              nsv.sv_ty
+          in
+          let regions =
+            List.filter
+              (fun r ->
+                ty_has_regions_in_set type_infos (RegionSet.singleton r) ty)
+              (List.map (fun rid -> RVar (Free rid)) (List.rev fresh_regions))
+          in
+          let has_static =
+            ty_has_regions_in_set type_infos (RegionSet.singleton RStatic) ty
+          in
+          let all_regions = if has_static then RStatic :: regions else regions in
+          if
+            all_regions = []
+            || ty_has_mut_borrow_for_region_in_set type_infos
+                 (RegionSet.of_list all_regions) ty
+          then super#visit_VSymbolic env nsv
+          else
+            let osv : symbolic_value = List.assoc nsv.sv_id !sid_subst in
+            let nsv = { nsv with sv_ty = ty } in
+            let mk_abs (parents : AbsId.Set.t) (r : region) : abs =
+              let borrow : tavalue =
+                let proj : symbolic_proj = { sv_id = osv.sv_id; proj_ty = ty } in
+                {
+                  value = ASymbolic (PNone, AProjBorrows { proj; loans = [] });
+                  ty;
+                }
+              in
+              let loan : tavalue =
+                let proj : symbolic_proj = { sv_id = nsv.sv_id; proj_ty = ty } in
+                {
+                  value =
+                    ASymbolic
+                      (PNone, AProjLoans { proj; consumed = []; borrows = [] });
+                  ty;
+                }
+              in
+              {
+                abs_id = ctx.fresh_abs_id ();
+                kind;
+                can_end = true;
+                parents;
+                ended_subabs = AbsLevelSet.empty;
+                regions = { owned = RegionSet.singleton r };
+                avalues = [ borrow; loan ];
+                cont;
+              }
+            in
+            let region_absl = List.map (mk_abs AbsId.Set.empty) regions in
+            (* As in [reborrow_symbolic_borrows], the abstraction of the static
+               region has the other abstractions as parents *)
+            let static_absl =
+              if has_static then
+                [
+                  mk_abs
+                    (AbsId.Set.of_list
+                       (List.map (fun (a : abs) -> a.abs_id) region_absl))
+                    RStatic;
+                ]
+              else []
+            in
+            fresh_absl := static_absl @ List.rev region_absl @ !fresh_absl;
+            VSymbolic nsv
+      end
+    in
+    visitor#visit_tvalue () v
+  in
 
   (* Auxiliary function to create a new abstraction for a shared value.
 
@@ -104,10 +196,26 @@ let reborrow_ashared_loans (span : Meta.span) (loop_id : LoopId.id option)
     (* We need a fresh region for the new abstraction *)
     let nrid = ctx.fresh_region_id () in
 
+    let kind : abs_kind =
+      match loop_id with
+      | Some loop_id -> Loop loop_id
+      | None -> Identity
+    in
+    let cont : abs_cont option =
+      if with_abs_conts then
+        Some
+          {
+            output = Some (mk_etuple ~borrow_proj:true []);
+            input = Some (mk_etuple ~borrow_proj:false []);
+          }
+      else None
+    in
+
     (* Prepare the shared value *)
     let nsv =
       mk_value_with_fresh_sids_no_shared_loans abs.regions.owned nrid sv
     in
+    let nsv = track_copied_symbolic_loans kind cont nrid nsv in
 
     (* Introduce the new abstraction for the shared values.
 
@@ -141,23 +249,9 @@ let reborrow_ashared_loans (span : Meta.span) (loop_id : LoopId.id option)
 
     (* Create the abstraction *)
     let avalues = [ borrow_value; loan_value ] in
-    let kind : abs_kind =
-      match loop_id with
-      | Some loop_id -> Loop loop_id
-      | None -> Identity
-    in
     let can_end = true in
     let regions : abs_regions =
       { owned = RegionSet.singleton (RVar (Free nrid)) }
-    in
-    let cont : abs_cont option =
-      if with_abs_conts then
-        Some
-          {
-            output = Some (mk_etuple ~borrow_proj:true []);
-            input = Some (mk_etuple ~borrow_proj:false []);
-          }
-      else None
     in
     let fresh_abs =
       {
@@ -300,7 +394,7 @@ let reborrow_symbolic_borrows (span : Meta.span) (loop_id : LoopId.id option)
     in
 
     (* Introduce the fresh regions *)
-    let push_abs (nr : region) =
+    let push_abs (parents : AbsId.Set.t) (nr : region) : AbsId.id =
       let rty = ty in
 
       (* Create the symbolic borrow *)
@@ -377,26 +471,33 @@ let reborrow_symbolic_borrows (span : Meta.span) (loop_id : LoopId.id option)
           abs_id = ctx.fresh_abs_id ();
           kind;
           can_end;
-          parents = AbsId.Set.empty;
+          parents;
           ended_subabs = AbsLevelSet.empty;
           regions;
           avalues;
           cont;
         }
       in
-      fresh_absl := fresh_abs :: !fresh_absl
+      fresh_absl := fresh_abs :: !fresh_absl;
+      fresh_abs.abs_id
     in
 
-    List.iter (fun rid -> push_abs (RVar (Free rid))) fresh_regions;
+    let region_abs =
+      List.map (fun rid -> push_abs AbsId.Set.empty (RVar (Free rid))) fresh_regions
+    in
     (* The static region is not refreshed: if the type contains it (note that it
        may be hidden in ADTs, see {!TypesUtils.adt_has_hidden_static}) we also
        need to introduce an abstraction which reborrows the static part of the
-       symbolic value. *)
+       symbolic value. The static region outlives the other regions: like in
+       the regions hierarchy of a function call, ending this abstraction
+       requires ending the other abstractions first (they are its parents).
+       This only adds constraints, and keeps the abstractions consistent with
+       the ones they are joined with (whose parents come from function calls). *)
     if
       ty_has_regions_in_set ctx.type_ctx.type_infos
         (RegionSet.singleton RStatic)
         ty
-    then push_abs RStatic;
+    then ignore (push_abs (AbsId.Set.of_list region_abs) RStatic);
 
     let nsv : symbolic_value = { sv_id = nsid; sv_ty = ty } in
     sid_subst := (sv, nsv) :: !sid_subst;
