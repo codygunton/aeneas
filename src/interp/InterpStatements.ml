@@ -978,12 +978,16 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
               branch_for_case (fun case -> case.kind = CInteger sv)
             in
             eval_block config target ctx
-        | VSymbolic sv, TScalar (TInteger _ as int_ty) ->
+        | VLiteral (VChar c), TScalar TChar ->
+            let target = branch_for_case (fun case -> case.kind = CChar c) in
+            eval_block config target ctx
+        | VSymbolic sv, TScalar ((TInteger _ | TChar) as lit_ty) ->
             let values, target_blocks =
               List.split
                 (List.map
                    (fun (case, branch_id) ->
-                     (TypesUtils.constant_expr_as_integer case, branch branch_id))
+                     ( TypesUtils.constant_expr_as_literal case,
+                       branch branch_id ))
                    data.branches)
             in
             let otherwise =
@@ -993,9 +997,9 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
             in
             (* Expand the symbolic value *)
             let (ctx_branches, ctx_otherwise), cf_int =
-              expand_symbolic_int span sv
+              expand_symbolic_literal span sv
                 (S.mk_opt_place_from_op span op ctx)
-                (scalar_as_integer int_ty) values ctx
+                lit_ty values ctx
             in
             (* Evaluate the branches: first the "regular" branches *)
             let resl_branches =
@@ -1045,8 +1049,8 @@ and eval_switch_raw (config : config) (span : Meta.span) (data : switch_data)
       let access = Read in
       let expand_prim_copy = false in
       let _, p_v, _, ctx, cf_read_p =
-        access_rplace_reorganize_and_read config span expand_prim_copy access p
-          ctx
+        access_rplace_reorganize_and_read ~allow_inner_bottoms:true config span
+          expand_prim_copy access p ctx
       in
       let ctx0 = ctx in
       (* Match on the value *)

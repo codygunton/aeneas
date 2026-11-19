@@ -635,7 +635,7 @@ let expand_symbolic_adt (span : Meta.span) (sv : symbolic_value)
 
 (** Expand an enumeration only to the given variants: the last context is the
     "otherwise" context, for the other variants, where the symbolic value is
-    left unchanged (similarly to {!expand_symbolic_int}). *)
+    left unchanged (similarly to {!expand_symbolic_literal}). *)
 let expand_symbolic_adt_variants (span : Meta.span) (sv : symbolic_value)
     (sv_place : SA.mplace option) (variants : VariantId.id list) :
     eval_ctx -> (eval_ctx list * eval_ctx) * (SA.expr list * SA.expr -> SA.expr)
@@ -663,18 +663,14 @@ let expand_symbolic_adt_variants (span : Meta.span) (sv : symbolic_value)
       [%craise] span
         ("expand_symbolic_adt_variants: unexpected type: " ^ show_rty sv.sv_ty)
 
-let expand_symbolic_int (span : Meta.span) (sv : symbolic_value)
-    (sv_place : SA.mplace option) (int_type : integer_type)
-    (tgts : integer_value list) :
-    eval_ctx -> (eval_ctx list * eval_ctx) * (SA.expr list * SA.expr -> SA.expr)
+(** Expand a symbolic integer or [char] for a switch over its values [tgts] *)
+let expand_symbolic_literal (span : Meta.span) (sv : symbolic_value)
+    (sv_place : SA.mplace option) (lit_ty : scalar_type) (tgts : literal list)
+    : eval_ctx -> (eval_ctx list * eval_ctx) * (SA.expr list * SA.expr -> SA.expr)
     =
  fun ctx ->
   (* Sanity check *)
-  (match int_type with
-  | Signed int_type ->
-      [%sanity_check] span (sv.sv_ty = TScalar (TInteger (Signed int_type)))
-  | Unsigned int_type ->
-      [%sanity_check] span (sv.sv_ty = TScalar (TInteger (Unsigned int_type))));
+  [%sanity_check] span (sv.sv_ty = TScalar lit_ty);
   (* For all the branches of the switch, we expand the symbolic value
    * to the value given by the branch and execute the branch statement.
    * For the otherwise branch, we leave the symbolic value as it is
@@ -682,7 +678,7 @@ let expand_symbolic_int (span : Meta.span) (sv : symbolic_value)
    * value of the scrutinee...) and simply execute the otherwise statement.
    *)
   (* Substitute the symbolic values to generate the contexts in the branches *)
-  let seel = List.map (fun v -> SeLiteral (VScalar v)) tgts in
+  let seel = List.map (fun v -> SeLiteral v) tgts in
   let ctx_branches =
     List.map (apply_symbolic_expansion_non_borrow span sv ctx) seel
   in

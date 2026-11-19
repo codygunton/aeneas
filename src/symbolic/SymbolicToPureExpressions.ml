@@ -1533,20 +1533,18 @@ and translate_expansion (p : S.mplace option) (sv : V.symbolic_value)
         ^ texpr_to_string ctx false_e];
       [%sanity_check] ctx.span (ty = false_e.ty);
       { e; ty }
-  | ExpandInt (int_ty, branches, otherwise) ->
-      let translate_branch ((v, branch_e) : V.integer_value * S.expr) :
-          match_branch =
+  | ExpandLiteral (lit_ty, branches, otherwise) ->
+      let translate_branch ((v, branch_e) : V.literal * S.expr) : match_branch
+          =
         (* We don't need to update the context: we don't introduce any
            new values/variables *)
         let branch = translate_expr branch_e ctx in
-        let pat = mk_tpat_from_literal (VScalar v) in
+        let pat = mk_tpat_from_literal (translate_literal v) in
         close_branch ctx.span pat branch
       in
       let branches = List.map translate_branch branches in
       let otherwise = translate_expr otherwise ctx in
-      let pat_ty =
-        TLiteral (translate_literal_type (TypesUtils.integer_as_scalar int_ty))
-      in
+      let pat_ty = TLiteral (translate_literal_type lit_ty) in
       let otherwise_pat : tpat = { pat = PIgnored; ty = pat_ty } in
       let otherwise : match_branch =
         { pat = otherwise_pat; branch = otherwise }

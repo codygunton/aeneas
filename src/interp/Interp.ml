@@ -728,6 +728,9 @@ let evaluate_function_symbolic (synthesize : bool) (decls_ctx : decls_ctx)
       (* Finish synthesizing *)
       if synthesize then Some (cc el) else None
     with exn when Errors.is_item_failure exn ->
+      (* Debugging aid: print where the error was raised *)
+      if Sys.getenv_opt "AENEAS_BACKTRACE" <> None then
+        prerr_endline ("Backtrace:\n" ^ Printexc.get_backtrace ());
       let error = Errors.to_item_failure exn in
       let name = name_to_string () in
       let name_pattern =

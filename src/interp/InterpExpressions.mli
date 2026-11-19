@@ -21,6 +21,7 @@ open InterpPaths
     [expand_prim_copy]: if [true], expand the symbolic values which are
     primitively copyable and contain borrows. *)
 val access_rplace_reorganize_and_read :
+  ?allow_inner_bottoms:bool ->
   config ->
   Meta.span ->
   bool ->

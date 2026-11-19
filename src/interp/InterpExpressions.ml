@@ -48,12 +48,17 @@ let expand_if_borrows_at_place (span : Meta.span) (access : access_kind)
 (** Read a place.
 
     We check that the value *doesn't contain bottoms or reserved borrows*. *)
-let read_place_check (span : Meta.span) (access : access_kind) (p : place)
-    (ctx : eval_ctx) : loan_id option * tvalue * path =
+let read_place_check ?(allow_inner_bottoms = false) (span : Meta.span)
+    (access : access_kind) (p : place) (ctx : eval_ctx) :
+    loan_id option * tvalue * path =
   let lid, v, path = eval_place span access p ctx in
-  (* Check that there are no bottoms in the value *)
+  (* Check that there are no bottoms in the value (if [allow_inner_bottoms]:
+     that the value itself is not bottom, for the reads of a discriminant: the
+     fields of an enumeration may have been moved) *)
   [%cassert] span
-    (not (bottom_in_value ctx.ended_regions v))
+    (if allow_inner_bottoms then
+       (value_strip_shared_loans v).value <> VBottom
+     else not (bottom_in_value ctx.ended_regions v))
     "There should be no bottoms in the value";
   (* Check that there are no reserved borrows in the value *)
   [%cassert] span
@@ -62,8 +67,9 @@ let read_place_check (span : Meta.span) (access : access_kind) (p : place)
   (* Return *)
   (lid, v, path)
 
-let access_rplace_reorganize_and_read (config : config) (span : Meta.span)
-    (greedy_expand : bool) (access : access_kind) (p : place) (ctx : eval_ctx) :
+let access_rplace_reorganize_and_read ?(allow_inner_bottoms = false)
+    (config : config) (span : Meta.span) (greedy_expand : bool)
+    (access : access_kind) (p : place) (ctx : eval_ctx) :
     loan_id option
     * tvalue
     * path
@@ -81,7 +87,9 @@ let access_rplace_reorganize_and_read (config : config) (span : Meta.span)
        else (ctx, fun e -> e))
   in
   (* Read the place - note that this checks that the value doesn't contain bottoms *)
-  let lid, value, path = read_place_check span access p ctx in
+  let lid, value, path =
+    read_place_check ~allow_inner_bottoms span access p ctx
+  in
   (* Compose *)
   (lid, value, path, ctx, cc)
 
@@ -1079,6 +1087,23 @@ let eval_binary_op_concrete_compute (span : Meta.span) (binop : binop)
         | _ ->
             [%craise] span ("Invalid inputs for binop: " ^ binop_to_string binop)
       end
+    | VLiteral (VChar c1), VLiteral (VChar c2) -> begin
+        (* Chars only support the comparison operations (on their code points) *)
+        let c1, c2 = (Uchar.to_int c1, Uchar.to_int c2) in
+        match binop with
+        | Lt | Le | Ge | Gt ->
+            let b =
+              match binop with
+              | Lt -> c1 < c2
+              | Le -> c1 <= c2
+              | Ge -> c1 >= c2
+              | Gt -> c1 > c2
+              | _ -> [%craise] span "Unreachable"
+            in
+            Ok ({ value = VLiteral (VBool b); ty = TScalar TBool } : tvalue)
+        | _ ->
+            [%craise] span ("Invalid inputs for binop: " ^ binop_to_string binop)
+      end
     | VLiteral (VScalar sv1), VLiteral (VScalar sv2) -> begin
         let sv1_value, sv2_value = (get_val sv1, get_val sv2) in
         let sv1_int_ty, sv2_int_ty = (get_ty sv1, get_ty sv2) in
@@ -1189,6 +1214,9 @@ let eval_binary_op_symbolic (config : config) (span : Meta.span) (binop : binop)
        (booleans are ordered: [false < true]), or bitwise operators (&, |, ^).
        In the other cases, input types are integers *)
       match (v1.ty, v2.ty) with
+      | TScalar TChar, TScalar TChar
+        when binop = Lt || binop = Le || binop = Ge || binop = Gt ->
+          TScalar TBool
       | TScalar TBool, TScalar TBool
         when binop = Lt || binop = Le || binop = Ge || binop = Gt
              || binop = BitAnd || binop = BitOr || binop = BitXor ->
@@ -1418,7 +1446,8 @@ let eval_discriminant (config : config) (span : Meta.span) (p : place)
   let access = Read in
   let expand_prim_copy = false in
   let _, v, _, ctx, cf_read =
-    access_rplace_reorganize_and_read config span expand_prim_copy access p ctx
+    access_rplace_reorganize_and_read ~allow_inner_bottoms:true config span
+      expand_prim_copy access p ctx
   in
   let v = value_strip_shared_loans v in
 

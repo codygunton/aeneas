@@ -3407,6 +3407,332 @@ let fix_anon_const_initializers (crate : crate) (f : fun_decl) : fun_decl =
     }
   else f
 
+(** Make the variant of an enumeration explicit before reading one of its
+    fields when the control-flow doesn't make it explicit.
+
+    A place [(x as V).f] (a downcast) can only be read when [x] has variant [V]
+    (otherwise the behavior is undefined). The symbolic execution knows the
+    variant of [x] inside the branch of a match on [x]; but the passes which
+    make the branchings joinable (see [join_block_escapes]) can move a read of
+    a field of [x] after the join of the branches, where [x] is a symbolic value
+    whose variant is unknown, and an enumeration with several variants can't be
+    expanded without branching. For every read of [(x as V).f] (with [x] an
+    enumeration with several variants) which is not in a branch of a match on
+    [x] for [V] (or after such a read), with no write to [x] in between, we
+    insert before the statement:
+    {[
+      match x { V => {}, _ => undefined_behavior }
+    ]}
+    This is exactly the semantics of the downcast: the other branch is never
+    taken in a defined execution. *)
+let guard_downcasts (crate : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let several_variants (ty : ty) : type_decl_ref option =
+        match ty with
+        | TAdt ({ id; builtin = None; _ } as tref) -> (
+            match TypeDeclId.Map.find_opt id crate.type_decls with
+            | Some { kind = Enum (_ :: _ :: _); _ } -> Some tref
+            | _ -> None)
+        | _ -> None
+      in
+      (* The downcasts of a read place: [(x, V)] for every prefix [(x as V)],
+         innermost first *)
+      let rec downcasts (p : place) : (place * variant_id) list =
+        match p.kind with
+        | PlaceProjection (base, pe) -> (
+            let inner = downcasts base in
+            match pe with
+            | Field (Some vid, _) when several_variants base.ty <> None ->
+                inner @ [ (base, vid) ]
+            | _ -> inner)
+        | PlaceLocal _ | PlaceGlobal _ -> []
+      in
+      (* The downcasts which a written place reads: those under a deref *)
+      let rec written_downcasts (p : place) : (place * variant_id) list =
+        match p.kind with
+        | PlaceProjection (base, Deref) -> downcasts base
+        | PlaceProjection (base, _) -> written_downcasts base
+        | PlaceLocal _ | PlaceGlobal _ -> []
+      in
+      let rec is_prefix (w : place) (p : place) : bool =
+        w = p
+        ||
+        match p.kind with
+        | PlaceProjection (base, _) -> is_prefix w base
+        | _ -> false
+      in
+      (* The places read and the places written by a statement (not
+         looking into the nested blocks) *)
+      let reads_writes (st : statement) : place list * place list =
+        let reads = ref [] in
+        let writes = ref [] in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+            method! visit_block _ _ = ()
+
+            method! visit_operand env op =
+              (match op with
+              | Copy (p, _) | Read p | Move p -> reads := p :: !reads
+              | Constant _ -> ());
+              super#visit_operand env op
+
+            method! visit_rvalue env rv =
+              (match rv with
+              | RvRef (p, kind, _) -> (
+                  reads := p :: !reads;
+                  match kind with
+                  | BMut | BTwoPhaseMut -> writes := p :: !writes
+                  | _ -> ())
+              | RawPtr (p, kind, _) -> (
+                  reads := p :: !reads;
+                  match kind with
+                  | RMut -> writes := p :: !writes
+                  | RShared -> ())
+              | Discriminant p -> reads := p :: !reads
+              | _ -> ());
+              super#visit_rvalue env rv
+
+            method! visit_switch_scrutinee env s =
+              (match s with
+              | SwitchDiscriminant p -> reads := p :: !reads
+              | SwitchValue _ -> ());
+              super#visit_switch_scrutinee env s
+          end
+        in
+        visitor#visit_statement () st;
+        let written =
+          match st.kind with
+          | Assign (p, _) | Call (_, p, _) | SetDiscriminant (p, _) -> [ p ]
+          | Drop (p, _, _, _) -> [ p ]
+          | _ -> []
+        in
+        (!reads, written @ !writes)
+      in
+      (* The places written by a statement, including in its nested blocks *)
+      let deep_writes (st : statement) : place list =
+        let writes = ref [] in
+        let visitor =
+          object
+            inherit [_] iter_statement as super
+
+            method! visit_statement env st =
+              writes := snd (reads_writes st) @ !writes;
+              (match st.kind with
+              | StorageDead id ->
+                  writes :=
+                    { kind = PlaceLocal id; ty = mk_unit_ty } :: !writes
+              | _ -> ());
+              super#visit_statement env st
+          end
+        in
+        visitor#visit_statement () st;
+        !writes
+      in
+      let same_root (w : place) (p : place) : bool =
+        (* [StorageDead] writes are represented by a place with a dummy type *)
+        let rec root (p : place) =
+          match p.kind with
+          | PlaceProjection (b, _) -> root b
+          | k -> k
+        in
+        match w.kind with
+        | PlaceLocal _ when w.ty = mk_unit_ty -> root w = root p
+        | _ -> false
+      in
+      let kill (facts : (place * variant_id) list) (writes : place list) =
+        List.filter
+          (fun (x, _) ->
+            not (List.exists (fun w -> is_prefix w x || same_root w x) writes))
+          facts
+      in
+      let guard span (x : place) (vid : variant_id) : statement =
+        let tref = Option.get (several_variants x.ty) in
+        let data : switch_data =
+          {
+            scrutinee = SwitchDiscriminant x;
+            branches =
+              [
+                ( {
+                    kind = CDiscriminant (tref, vid);
+                    ty = TScalar (TInteger (Signed Isize));
+                  },
+                  BranchId.zero );
+              ];
+            fallback = Some (BranchId.of_int 1);
+          }
+        in
+        mk_statement span
+          (Switch
+             ( data,
+               [
+                 mk_block span [ mk_statement span Nop ];
+                 mk_block span [ mk_statement span UndefinedBehavior ];
+               ] ))
+      in
+      (* [facts]: the places whose variant is known *)
+      let rec block (facts : (place * variant_id) list) (b : block) : block =
+        let _, statements =
+          List.fold_left
+            (fun (facts, acc) st ->
+              let guards, facts = guards_for facts st in
+              let st, facts = stmt facts st in
+              (facts, List.rev_append (guards @ [ st ]) acc))
+            (facts, []) b.statements
+        in
+        { b with statements = List.rev statements }
+      and guards_for facts (st : statement) =
+        let reads, _ = reads_writes st in
+        let dest_reads =
+          match st.kind with
+          | Assign (p, _) | Call (_, p, _) | SetDiscriminant (p, _) ->
+              written_downcasts p
+          | _ -> []
+        in
+        let needed = List.concat_map downcasts reads @ dest_reads in
+        List.fold_left
+          (fun (guards, facts) (x, vid) ->
+            if List.mem (x, vid) facts then (guards, facts)
+            else (guards @ [ guard st.span x vid ], (x, vid) :: facts))
+          ([], facts) needed
+      and stmt facts (st : statement) : statement * (place * variant_id) list =
+        match st.kind with
+        | Switch (data, branches) ->
+            let branch_facts (i : int) =
+              match data.scrutinee with
+              | SwitchDiscriminant x -> (
+                  match
+                    List.filter
+                      (fun (_, id) -> BranchId.to_int id = i)
+                      data.branches
+                  with
+                  | [ ({ kind = CDiscriminant (_, vid); _ }, _) ] ->
+                      (x, vid) :: facts
+                  | _ -> facts)
+              | SwitchValue _ -> facts
+            in
+            let branches =
+              List.mapi (fun i b -> block (branch_facts i) b) branches
+            in
+            let st = { st with kind = Switch (data, branches) } in
+            (st, kill facts (deep_writes st))
+        | Loop body ->
+            let facts = kill facts (deep_writes st) in
+            ({ st with kind = Loop (block facts body) }, facts)
+        | _ -> (st, kill facts (deep_writes st))
+      in
+      {
+        f with
+        body = StructuredBody { body with body = block [] body.body };
+      }
+  | _ -> f
+
+(** Turn the copies of mutable references into reborrows.
+
+    Charon translates MIR's [deref_copy] (introduced by rustc to dereference a
+    reference stored in a place which is itself behind a reference, e.g. the
+    [&mut] captured by a closure: [tmp = deref_copy ( *self).0; ( *tmp).f = ...])
+    to [Read]. On a mutable reference the copy is a reborrow: [tmp] points to
+    the same location and is only used while the copied reference is unused, so
+    we rewrite [tmp := read p] (with [p : &mut T]) to [tmp := &mut *p], which the
+    symbolic execution supports (it can't copy a mutable borrow). *)
+let deref_copy_to_reborrow (_ : crate) (f : fun_decl) : fun_decl =
+  match f.body with
+  | StructuredBody body ->
+      let update (st : statement) : statement list =
+        match st.kind with
+        | Assign (dst, Use (Read ({ ty = TRef (_, pointee, RMut); _ } as p), _))
+          ->
+            let pointee_place =
+              { kind = PlaceProjection (p, Deref); ty = pointee }
+            in
+            [
+              {
+                st with
+                kind =
+                  Assign
+                    ( dst,
+                      RvRef (pointee_place, BMut, Constant mk_unit_const) );
+              };
+            ]
+        | _ -> [ st ]
+      in
+      {
+        f with
+        body = StructuredBody { body with body = map_statement update body.body };
+      }
+  | _ -> f
+
+(** Lower the constant array repetitions [[v; N]] (which Charon leaves as
+    constants, e.g. in the values of statics such as
+    [static S: Set = Set { bits: [0u64; 4] }]) to array aggregates of [N]
+    copies of the constant [v]: [tmp := [v, ..., v]], the operand becoming
+    [move tmp]. A constant is a value, so the repetition is exactly the array of
+    [N] copies of it. We only do so up to a bound on [N] (larger repetitions are
+    left unchanged). *)
+let lower_constant_repeats (_ : crate) (f : fun_decl) : fun_decl =
+  let max_len = 1024 in
+  let repeat_len (c : constant_expr) : int option =
+    match c.kind with
+    | CInteger v ->
+        let n = Scalars.get_val v in
+        if Z.leq n (Z.of_int max_len) then Some (Z.to_int n) else None
+    | _ -> None
+  in
+  match f.body with
+  | StructuredBody body ->
+      let fresh, finish = fresh_locals body in
+      let changed = ref false in
+      let in_statement (st : statement) : statement list =
+        let span = st.span in
+        let new_statements = ref [] in
+        let visitor =
+          object (self)
+            inherit [_] map_statement as super
+
+            method! visit_operand env op =
+              match op with
+              | Constant
+                  ({ kind = CRepeat (v, count, sized); ty = TArray (ety, _, _) }
+                   as c) -> (
+                  match repeat_len count with
+                  | Some n ->
+                      changed := true;
+                      let fields =
+                        List.init n (fun _ ->
+                            self#visit_operand env (Constant v))
+                      in
+                      let tmp = fresh span "repeat" c.ty in
+                      new_statements :=
+                        mk_statement span
+                          (Assign
+                             ( tmp,
+                               Aggregate
+                                 (AggregatedArray (ety, count, sized), fields) ))
+                        :: !new_statements;
+                      Move tmp
+                  | None -> op)
+              | _ -> super#visit_operand env op
+          end
+        in
+        let kind =
+          match st.kind with
+          | Assign (lv, rv) -> Assign (lv, visitor#visit_rvalue () rv)
+          | Assert (({ cond; _ } as assertion), on_failure, on_unwind) ->
+              let cond = visitor#visit_operand () cond in
+              Assert ({ assertion with cond }, on_failure, on_unwind)
+          | Call (({ args; _ } as call), dest, on_unwind) ->
+              let args = List.map (visitor#visit_operand ()) args in
+              Call ({ call with args }, dest, on_unwind)
+          | kind -> kind
+        in
+        List.rev ({ st with kind } :: !new_statements)
+      in
+      let b = map_statement in_statement body.body in
+      if !changed then { f with body = StructuredBody (finish b) } else f
+  | _ -> f
+
 let apply_passes (crate : crate) : crate =
   (* Passes that apply to the whole crate *)
   let crate = update_array_default crate in
@@ -3420,11 +3746,14 @@ let apply_passes (crate : crate) : crate =
       ("erase_body_regions", erase_body_regions);
       ("remove_unreachable", remove_unreachable);
       ("erase_unwind_blocks", erase_unwind_blocks);
+      ("lower_constant_repeats", lower_constant_repeats);
+      ("deref_copy_to_reborrow", deref_copy_to_reborrow);
       ("ret_to_carrier", ret_to_carrier);
       ("lower_loop_exits", lower_loop_exits);
       ("join_block_escapes", join_block_escapes);
       ("hoist_match_fallbacks", hoist_match_fallbacks);
       ("update_loop", update_loops);
+      ("guard_downcasts", guard_downcasts);
       ("remove_useless_joins", remove_useless_joins);
       ( "remove_shallow_borrows_storage_live_dead",
         remove_shallow_borrows_storage_live_dead );
@@ -3479,7 +3808,10 @@ let apply_passes (crate : crate) : crate =
               | Some s ->
                   let env = Print.crate_to_fmt_env crate in
                   let name = Print.name_to_string env f.item_meta.name in
-                  Str.string_match (Str.regexp (".*" ^ Str.quote s)) name 0
+                  List.exists
+                    (fun s ->
+                      Str.string_match (Str.regexp (".*" ^ Str.quote s)) name 0)
+                    (String.split_on_char '|' s)
               | None -> false
             in
             let print (what : string) (f : fun_decl) =

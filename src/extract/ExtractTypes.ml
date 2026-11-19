@@ -78,6 +78,18 @@ let extract_literal (span : Meta.span) (fmt : F.formatter) ~(is_pattern : bool)
         | Coq | FStar | Lean -> if b then "true" else "false"
       in
       F.pp_print_string fmt b
+  | VChar c when backend () = Lean ->
+      (* Printable ASCII characters are printed as is; the others of the basic
+         plane with a [\uHHHH] escape (a literal, so that it can be used in
+         patterns) *)
+      let i = Uchar.to_int c in
+      let s =
+        if i >= 0x20 && i < 0x7f && i <> Char.code '\'' && i <> Char.code '\\'
+        then "'" ^ String.make 1 (Char.chr i) ^ "'"
+        else if i < 0x10000 then Printf.sprintf "'\\u%04x'" i
+        else Printf.sprintf "(Char.ofNat 0x%x)" i
+      in
+      F.pp_print_string fmt s
   | VChar c when Uchar.is_char c -> (
       let c = Uchar.to_char c in
       match backend () with
@@ -106,9 +118,6 @@ let extract_literal (span : Meta.span) (fmt : F.formatter) ~(is_pattern : bool)
         ("(" ^ float_name fv.float_ty ^ ".ofBitsNat 0x"
         ^ Z.format "%x" fv.float_bits
         ^ " /- " ^ fv.float_value ^ " -/)")
-  | VChar c when backend () = Lean ->
-      F.pp_print_string fmt
-        ("(Char.ofNat 0x" ^ Printf.sprintf "%x" (Uchar.to_int c) ^ ")")
   | VChar _ | VFloat _ | VByteStr _ ->
       [%admit_raise] span
         "Float, string, non-ASCII chars and byte string literals are \
