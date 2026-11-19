@@ -978,6 +978,104 @@ let lower_loop_exits (crate : crate) (f : fun_decl) : fun_decl =
       { f with body = StructuredBody (finish (lower_block 0 body.body)) }
   | _ -> f
 
+(** Move the statements following a branching into its branches which may fall
+    through, when its other branches always escape (with a [break],
+    [continue], [return], a panic or undefined behavior):
+    {[
+      match x { A => { a }, B => { b; break 0 } }; rest
+        ~>
+      match x { A => { a; rest }, B => { b; break 0 } }
+    ]}
+    This preserves the semantics (only the branches which fall through
+    execute [rest]; moving [rest] into a branch does not change the depths of
+    its [break]s and [continue]s, as branchings are not loops). It avoids
+    joining the contexts of the branches before [rest]: the join of a branch
+    which escapes after it moved a field out of the scrutinee (as in the
+    [Break] branch of the match on [Try::branch] for the [?] operator), or
+    before it initialized a local, loses the variant of the scrutinee or the
+    value of the local on the branches which fall through, which [rest] reads
+    (see [join_block_escapes], which makes the branchings joinable by joining
+    them before dispatching on a flag). With a single branch which falls
+    through, no code is duplicated; with several, we duplicate [rest] only if
+    it is small (as the [&mut x.args] bindings of or-patterns falling through
+    to a common use in Cranelift's [InstructionData::arguments_mut]). *)
+let sink_into_fallthrough_branch (_ : crate) (f : fun_decl) : fun_decl =
+  let is_trivial (st : statement) =
+    match st.kind with
+    | StorageDead _ | StorageLive _ | Nop -> true
+    | _ -> false
+  in
+  let rec always_escapes (b : block) : bool =
+    match List.rev (List.filter (fun st -> not (is_trivial st)) b.statements) with
+    | [] -> false
+    | st :: _ -> (
+        match st.kind with
+        | Break _ | Continue _ | Return | Panic _ | UndefinedBehavior
+        | UnwindResume | UnwindTerminate _ ->
+            true
+        | Switch (_, branches) -> branches <> [] && List.for_all always_escapes branches
+        | _ -> false)
+  in
+  let max_duplicated_size = 32 in
+  (* Is the number of statements in a block (nested statements included) at
+     most [max]? We stop counting above [max]. *)
+  let size_at_most (max : int) (stl : statement list) : bool =
+    let n = ref 0 in
+    let visitor =
+      object
+        inherit [_] iter_statement as super
+
+        method! visit_statement env st =
+          incr n;
+          if !n > max then raise Exit;
+          super#visit_statement env st
+      end
+    in
+    try
+      List.iter (visitor#visit_statement ()) stl;
+      true
+    with Exit -> false
+  in
+  let rec block (b : block) : block = { b with statements = stmts b.statements }
+  and stmts (stl : statement list) : statement list =
+    match stl with
+    | [] -> []
+    | st :: rest -> (
+        let st = stmt st in
+        match st.kind with
+        | Switch (data, branches)
+          when (not (List.for_all is_trivial rest))
+               &&
+               let k =
+                 List.length
+                   (List.filter (fun b -> not (always_escapes b)) branches)
+               in
+               k >= 1
+               && k < List.length branches
+               && (k = 1 || size_at_most (max_duplicated_size / (k - 1)) rest) ->
+            (* The branches and [rest] are processed once *)
+            let rest = stmts rest in
+            let branches =
+              List.map
+                (fun (b : block) ->
+                  if always_escapes b then b
+                  else { b with statements = b.statements @ rest })
+                branches
+            in
+            [ { st with kind = Switch (data, branches) } ]
+        | _ -> st :: stmts rest)
+  and stmt (st : statement) : statement =
+    match st.kind with
+    | Switch (data, branches) ->
+        { st with kind = Switch (data, List.map block branches) }
+    | Loop b -> { st with kind = Loop (block b) }
+    | _ -> st
+  in
+  match f.body with
+  | StructuredBody body ->
+      { f with body = StructuredBody { body with body = block body.body } }
+  | _ -> f
+
 (** Make the branchings of loops which never continue joinable.
 
     Control-flow reconstruction without code duplication turns every join point
@@ -4189,8 +4287,7 @@ let lower_constant_repeats (_ : crate) (f : fun_decl) : fun_decl =
                   | Some n ->
                       changed := true;
                       let fields =
-                        List.init n (fun _ ->
-                            self#visit_operand env (Constant v))
+                        List.init n (fun _ -> self#lower_element env v)
                       in
                       let tmp = fresh span "repeat" c.ty in
                       new_statements :=
@@ -4203,6 +4300,24 @@ let lower_constant_repeats (_ : crate) (f : fun_decl) : fun_decl =
                       Move tmp
                   | None -> op)
               | _ -> super#visit_operand env op
+
+            (* The repeated constant: the interpreter doesn't support the
+               constant ADT values (Charon eliminates them in function bodies,
+               except inside repetitions, as in
+               [[const Option::None {}; 3usize]]), which we lower to
+               aggregates of their (lowered) fields as well *)
+            method lower_element env (v : constant_expr) : operand =
+              match v with
+              | { kind = CAdt (variant, fields); ty = TAdt tref } ->
+                  let fields = List.map (self#lower_element env) fields in
+                  let tmp = fresh span "repeat_elem" v.ty in
+                  new_statements :=
+                    mk_statement span
+                      (Assign
+                         (tmp, Aggregate (AggregatedAdt (tref, variant, None), fields)))
+                    :: !new_statements;
+                  Move tmp
+              | _ -> self#visit_operand env (Constant v)
           end
         in
         let kind =
@@ -4491,6 +4606,166 @@ let lower_box_new_uninit (crate : crate) (f : fun_decl) : fun_decl =
           }
   | _ -> f
 
+(** Lower the aggregates building an empty [Vec] to calls to [Vec::new].
+
+    The constant evaluator inlines the values of [const] and [static]
+    initializers: [static S: MachineEnv = create_reg_env(..)] becomes a body
+    which builds the fields of [Vec::new()] directly:
+    {[
+      _13 = cast<*const u8 is !null>(const 1usize)
+      _14 = NonNull { 0: move _13 }
+      ...
+      _21 = RawVec { 0: move _19, 1: move _20 }
+      _22 = alloc::vec::Vec { 0: move _21, 1: const 0usize }
+    ]}
+    The [Vec] type is opaque (it is modeled as a list), so we replace the
+    aggregate [Vec { buf, len: const 0 }] by [Vec::<T>::new()]: a vector of
+    length 0 is the empty vector whatever its buffer (the capacity is not
+    observable in the model). We then remove the assignments of locals which
+    are not read anymore, when their right-hand side has no effect (uses,
+    aggregates and casts), and give these unused locals the unit type (their
+    types, such as raw pointers, may not be supported). *)
+let lower_empty_vec_aggregates (crate : crate) (f : fun_decl) : fun_decl =
+  let match_name = ExtractName.match_name crate in
+  let vec_pat = NameMatcher.parse_pattern "alloc::vec::Vec" in
+  let vec_new_pat =
+    NameMatcher.parse_pattern "alloc::vec::{alloc::vec::Vec<@T>}::new"
+  in
+  let is_vec (id : TypeDeclId.id) : bool =
+    match TypeDeclId.Map.find_opt id crate.type_decls with
+    | Some d -> match_name vec_pat d.item_meta.name
+    | None -> false
+  in
+  let is_zero (op : operand) : bool =
+    match op with
+    | Constant { kind = CInteger v; _ } -> Z.equal (Scalars.get_val v) Z.zero
+    | _ -> false
+  in
+  let vec_new =
+    lazy
+      (FunDeclId.Map.values crate.fun_decls
+      |> List.find_opt (fun (d : fun_decl) ->
+             match_name vec_new_pat d.item_meta.name
+             && List.length d.generics.types = 1
+             && d.generics.trait_clauses = []))
+  in
+  match f.body with
+  | StructuredBody body ->
+      let changed = ref false in
+      let lower (st : statement) : statement list =
+        match st.kind with
+        | Assign
+            ( dst,
+              Aggregate
+                ( AggregatedAdt ({ id; generics; _ }, None, None),
+                  [ _; len ] ) )
+          when is_vec id && is_zero len && generics.types <> [] -> (
+            match Lazy.force vec_new with
+            | Some vec_new ->
+                changed := true;
+                let func =
+                  FnOpRegular
+                    {
+                      kind = Fun vec_new.def_id;
+                      generics =
+                        mk_generic_args_from_types [ List.hd generics.types ];
+                    }
+                in
+                [
+                  {
+                    st with
+                    kind =
+                      Call
+                        ( { func; args = []; safety = Inherit },
+                          dst,
+                          mk_block st.span [] );
+                  };
+                ]
+            | None -> [ st ])
+        | _ -> [ st ]
+      in
+      let b = map_statement lower body.body in
+      if not !changed then f
+      else
+        (* Remove the effect-free assignments of unread locals, until a fixed
+           point *)
+        let num_inputs = body.locals.arg_count in
+        let removable (id : LocalId.id) =
+          LocalId.to_int id > num_inputs
+        in
+        let removed = ref LocalId.Set.empty in
+        let rec dce (b : block) : block =
+          (* Count the occurrences of the locals, except in [StorageLive],
+             [StorageDead] and as the destination of a whole-local assignment *)
+          let reads = ref LocalId.Map.empty in
+          let visitor =
+            object
+              inherit [_] iter_statement as super
+              method! visit_local_id _ id =
+                reads :=
+                  LocalId.Map.update id
+                    (fun n -> Some (1 + Option.value ~default:0 n))
+                    !reads
+
+              method! visit_statement env st =
+                match st.kind with
+                | StorageLive _ | StorageDead _ -> ()
+                | Assign ({ kind = PlaceLocal _; _ }, rv) ->
+                    super#visit_rvalue env rv
+                | _ -> super#visit_statement env st
+            end
+          in
+          visitor#visit_block () b;
+          let unread id = not (LocalId.Map.mem id !reads) in
+          let progress = ref false in
+          let pure (rv : rvalue) =
+            match rv with
+            | Use _ | Aggregate _ | UnaryOp (Cast _, _) -> true
+            | _ -> false
+          in
+          let b =
+            map_statement
+              (fun st ->
+                match st.kind with
+                | Assign ({ kind = PlaceLocal id; _ }, rv)
+                  when removable id && unread id && pure rv ->
+                    progress := true;
+                    removed := LocalId.Set.add id !removed;
+                    []
+                | _ -> [ st ])
+              b
+          in
+          if !progress then dce b else b
+        in
+        let b = dce b in
+        (* The removed locals are not used anymore (except in [StorageLive]
+           and [StorageDead]): we remove those and give them the unit type *)
+        let b =
+          map_statement
+            (fun st ->
+              match st.kind with
+              | (StorageLive id | StorageDead id)
+                when LocalId.Set.mem id !removed ->
+                  []
+              | _ -> [ st ])
+            b
+        in
+        let locals =
+          List.map
+            (fun (l : local) ->
+              if LocalId.Set.mem l.index !removed then
+                { l with local_ty = mk_unit_ty }
+              else l)
+            body.locals.locals
+        in
+        {
+          f with
+          body =
+            StructuredBody
+              { body with body = b; locals = { body.locals with locals } };
+        }
+  | _ -> f
+
 let apply_passes (crate : crate) : crate =
   (* Passes that apply to the whole crate *)
   let crate = update_array_default crate in
@@ -4504,12 +4779,14 @@ let apply_passes (crate : crate) : crate =
       ("erase_body_regions", erase_body_regions);
       ("remove_unreachable", remove_unreachable);
       ("erase_unwind_blocks", erase_unwind_blocks);
+      ("lower_empty_vec_aggregates", lower_empty_vec_aggregates);
       ("lower_box_new_uninit", lower_box_new_uninit);
       ("lower_constant_repeats", lower_constant_repeats);
       ("deref_copy_to_reborrow", deref_copy_to_reborrow);
       ("lower_slice_metadata", lower_slice_metadata);
       ("ret_to_carrier", ret_to_carrier);
       ("lower_loop_exits", lower_loop_exits);
+      ("sink_into_fallthrough_branch", sink_into_fallthrough_branch);
       ("join_block_escapes", join_block_escapes);
       ("hoist_match_fallbacks", hoist_match_fallbacks);
       ("init_join_scalars", init_join_scalars);

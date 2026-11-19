@@ -1,0 +1,13 @@
+[package]
+name = "clifv_try_moved_residual"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "clifv_try_moved_residual"
+path = "src/lib.rs"
+
+[dependencies]
+clifv_try_moved_residual_dep = { path = "dep" }
+
+[workspace]

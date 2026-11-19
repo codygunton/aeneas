@@ -1,0 +1,13 @@
+[package]
+name = "clifv_static_empty_vec"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "clifv_static_empty_vec"
+path = "src/lib.rs"
+
+[dependencies]
+clifv_static_empty_vec_dep = { path = "dep" }
+
+[workspace]

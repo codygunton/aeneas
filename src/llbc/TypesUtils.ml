@@ -628,6 +628,24 @@ let ty_has_regions (ty : ty) : bool =
     false
   with Found -> true
 
+(** Return [true] if the only regions in the type are the static region (dyn
+    traits are ignored as in {!ty_no_regions}) *)
+let ty_only_static_regions (ty : ty) : bool =
+  let visitor =
+    object
+      inherit [_] iter_ty as super
+      method! visit_region _ r = if r <> RStatic then raise Found
+
+      method! visit_TDynTrait env tr =
+        if Config.type_analysis_ignore_dyn then ()
+        else super#visit_TDynTrait env tr
+    end
+  in
+  try
+    visitor#visit_ty () ty;
+    true
+  with Found -> false
+
 (** Return [true] if the trait ref doesn't contain regions (including erased
     regions) *)
 let trait_ref_no_regions (x : trait_ref) : bool =
