@@ -1261,7 +1261,14 @@ let hoist_match_fallbacks (crate : crate) (f : fun_decl) : fun_decl =
         | _ -> false
       in
       let total_reads = local_reads body.body.statements in
-      let local_ty id = (List.nth body.locals.locals (LocalId.to_int id)).local_ty in
+      (* The locals introduced by this pass (the [fallback_flag]s of the
+         matches already rewritten: [map_statement] rewrites the inner
+         statements first) are not yet in [body.locals]: they are [u32]s. *)
+      let local_ty id =
+        match List.nth_opt body.locals.locals (LocalId.to_int id) with
+        | Some l -> l.local_ty
+        | None -> u32_ty
+      in
       (* Does a branch other than the fallback initialize a local (which
          [init_join_scalars] doesn't handle) read after the match? With a
          carrier, the return value is moved into the carrier right after being

@@ -28,9 +28,9 @@ package «tests» {}
 @[default_target] lean_lib CastSigned
 @[default_target] lean_lib ChunksExact
 @[default_target] lean_lib ClifvAssocTypeClauses
+@[default_target] lean_lib ClifvBoolSwitchLet
 @[default_target] lean_lib ClifvCharSwitch
 @[default_target] lean_lib ClifvConstRepeat
-@[default_target] lean_lib ClifvBoolSwitchLet
 @[default_target] lean_lib ClifvDeepNesting
 @[default_target] lean_lib ClifvEnumFallback
 @[default_target] lean_lib ClifvForwardBreakChain
@@ -49,11 +49,12 @@ package «tests» {}
 @[default_target] lean_lib ClifvMonoStd
 @[default_target] lean_lib ClifvMoveAfterBorrowedResult
 @[default_target] lean_lib ClifvNestedBorrowCtx
+@[default_target] lean_lib ClifvNestedFallbacks
 @[default_target] lean_lib ClifvNestedLoopReturn
-@[default_target] lean_lib ClifvSlicePatterns
 @[default_target] lean_lib ClifvRecursiveLoop
 @[default_target] lean_lib ClifvRefImplName
 @[default_target] lean_lib ClifvResultVariant
+@[default_target] lean_lib ClifvSlicePatterns
 @[default_target] lean_lib ClifvStaticSharedBorrows
 @[default_target] lean_lib ClifvStdAllocCollections
 @[default_target] lean_lib ClifvStdAllocHash
