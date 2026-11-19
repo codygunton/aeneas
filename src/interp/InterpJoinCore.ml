@@ -886,12 +886,44 @@ let compute_fixed_abs_ids (ctx0 : eval_ctx) (ctx1 : eval_ctx) : AbsId.Set.t =
   let abs0 = ctx_get_abs ctx0 in
   let abs1 = ctx_get_abs ctx1 in
   let abs_ids = AbsId.Set.inter aids0 aids1 in
-  AbsId.Set.filter
-    (fun aid ->
-      let a0 = AbsId.Map.find aid abs0 in
-      let a1 = AbsId.Map.find aid abs1 in
-      (* We ignore the continuation expressions: when computing fixed points we
-         might remove/add continuations while the presence/absence shouldn't
-         have an impact on the way we match/unify contexts. *)
-      { a0 with cont = None } = { a1 with cont = None })
-    abs_ids
+  let fixed =
+    AbsId.Set.filter
+      (fun aid ->
+        let a0 = AbsId.Map.find aid abs0 in
+        let a1 = AbsId.Map.find aid abs1 in
+        (* We ignore the continuation expressions: when computing fixed points we
+           might remove/add continuations while the presence/absence shouldn't
+           have an impact on the way we match/unify contexts. *)
+        { a0 with cont = None } = { a1 with cont = None })
+      abs_ids
+  in
+  (* An abstraction which refers to a non-fixed abstraction (for instance, one
+     of its parents) is not fixed: the ids of the non-fixed abstractions get
+     refreshed (see [refresh_non_fixed_abs_ids]) and the abstractions themselves
+     may be merged, so the two copies of the referring abstraction wouldn't be
+     the same anymore. We remove those abstractions until we reach a fixed
+     point. *)
+  let refs =
+    AbsId.Set.fold
+      (fun aid refs ->
+        let ids = ref AbsId.Set.empty in
+        let visitor =
+          object
+            inherit [_] iter_abs
+            method! visit_abs_id _ id = ids := AbsId.Set.add id !ids
+          end
+        in
+        let abs = AbsId.Map.find aid abs0 in
+        visitor#visit_abs () { abs with cont = None };
+        AbsId.Map.add aid (AbsId.Set.remove aid !ids) refs)
+      fixed AbsId.Map.empty
+  in
+  let rec close fixed =
+    let fixed' =
+      AbsId.Set.filter
+        (fun aid -> AbsId.Set.subset (AbsId.Map.find aid refs) fixed)
+        fixed
+    in
+    if AbsId.Set.equal fixed fixed' then fixed else close fixed'
+  in
+  close fixed

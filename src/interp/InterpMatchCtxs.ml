@@ -217,10 +217,21 @@ let compute_abs_borrows_loans_maps (span : Meta.span) (explore : abs -> bool)
         | ASharedBorrow (npm, bid, sid) ->
             (* Add the current marker when visiting the borrow id *)
             register_borrow_id abs npm bid (Some sid)
-        | AProjSharedBorrow _ ->
+        | AProjSharedBorrow asb ->
             [%sanity_check] span (pm = PNone);
-            (* Process those normally *)
-            super#visit_aborrow_content (abs, pm) bc
+            (* The projected shared borrows are shared borrows owned by the
+               abstraction (see {!abstract_shared_borrow}): we register them
+               like [ASharedBorrow]. The projections of reborrows over
+               symbolic values contain no loans and give back nothing when
+               they end: we don't register them (like the shared borrows inside
+               shared values, see [visit_borrow_content] below), which only
+               means that we merge fewer abstractions. *)
+            List.iter
+              (fun (b : abstract_shared_borrow) ->
+                match b with
+                | AsbBorrow (bid, sid) -> register_borrow_id abs pm bid (Some sid)
+                | AsbProjReborrows _ -> ())
+              asb
         | AIgnoredMutBorrow (_, child)
         | AEndedIgnoredMutBorrow { child; given_back = _; given_back_meta = _ }
           ->
@@ -607,6 +618,36 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             (* See the comment for [AIgnoredMutLoan] *)
             let child = match_arec child0 child1 in
             M.match_aignored_shared_loans match_rec ctx0 ctx1 ty child
+        | ( AEndedMutLoan { child = child0; given_back = gb0; given_back_meta },
+            AEndedMutLoan { child = child1; given_back = gb1; _ } ) ->
+            (* The loan ended: it only remains to match the children and the
+               given back values (which may still contain loans or borrows).
+               We take the meta-information from the left - like for
+               [AEndedIgnoredMutBorrow], it doesn't matter. *)
+            let child = match_arec child0 child1 in
+            let given_back = match_arec gb0 gb1 in
+            {
+              value = ALoan (AEndedMutLoan { child; given_back; given_back_meta });
+              ty;
+            }
+        | ( AEndedIgnoredMutLoan
+              { child = child0; given_back = gb0; given_back_meta },
+            AEndedIgnoredMutLoan { child = child1; given_back = gb1; _ } ) ->
+            (* See the comment for [AEndedMutLoan] *)
+            let child = match_arec child0 child1 in
+            let given_back = match_arec gb0 gb1 in
+            {
+              value =
+                ALoan
+                  (AEndedIgnoredMutLoan { child; given_back; given_back_meta });
+              ty;
+            }
+        | AEndedSharedLoan (sv0, child0), AEndedSharedLoan (sv1, child1) ->
+            (* The shared value now behaves like a regular value: we match it
+               like the other values *)
+            let sv = match_rec sv0 sv1 in
+            let child = match_arec child0 child1 in
+            { value = ALoan (AEndedSharedLoan (sv, child)); ty }
         | _ -> [%craise_recover] M.recover M.span "Unreachable")
     | ASymbolic (pm0, proj0), ASymbolic (pm1, proj1) -> begin
         [%ldebug "Matching symbolic avalues"];
@@ -621,6 +662,17 @@ module MakeMatcher (M : PrimMatcher) : Matcher = struct
             let proj_ty = M.match_rtys ctx0 ctx1 proj0.proj_ty proj1.proj_ty in
             M.match_aproj_loans match_rec ctx0 ctx1 v0.ty pm0 ploans0 v1.ty pm1
               ploans1 ty proj_ty
+        | ( AEndedProjLoans { consumed = []; borrows = []; proj = _ },
+            AEndedProjLoans { consumed = []; borrows = []; proj = _ } )
+        | ( AEndedProjBorrows { loans = []; mvalues = _ },
+            AEndedProjBorrows { loans = []; mvalues = _ } )
+        | AEmpty, AEmpty ->
+            (* Those projections don't contain any loan or borrow anymore:
+               they only carry meta-information (the symbolic values which
+               were consumed or given back, for the synthesis). We take the
+               meta-information from the left - like for
+               [AEndedIgnoredMutBorrow], it doesn't matter. *)
+            { v0 with ty }
         | _ -> [%craise_recover] M.recover M.span "Unreachable"
       end
     | _ ->

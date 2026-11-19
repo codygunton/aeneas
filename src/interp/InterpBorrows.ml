@@ -2010,8 +2010,12 @@ let destructure_abs (span : Meta.span) (abs_kind : abs_kind) ~(can_end : bool)
             let ignored = mk_aignored span child_av.ty None in
             let value = ALoan (ASharedLoan (pm, bids, sv, ignored)) in
             push { value; ty };
-            (* Explore the child *)
-            list_avalues 0 push_fail child_av;
+            (* Explore the child. It may contain shared loans of the regions
+               of the abstraction when the shared value contains shared
+               borrows (for instance the ['static] borrows of a [Template] in
+               the ['static] abstraction): we flatten them like the other
+               nested values (see [list_nested_avalues]). *)
+            list_nested_avalues "Nested borrows are not supported yet" child_av;
             (* Push the avalues introduced because we decomposed the inner loans -
                note that we pay attention to the order in which we introduce
                the avalues: we want to push them *after* the outer loan. If we
