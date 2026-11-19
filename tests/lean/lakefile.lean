@@ -34,6 +34,9 @@ package «tests» {}
 @[default_target] lean_lib ClifvLoopEarlyReturn
 @[default_target] lean_lib ClifvLoopOuterBreak
 @[default_target] lean_lib ClifvLoopOuterContinue
+@[default_target] lean_lib ClifvMonoGenerics
+@[default_target] lean_lib ClifvMonoLocal
+@[default_target] lean_lib ClifvMonoStd
 @[default_target] lean_lib ClifvNestedBorrowCtx
 @[default_target] lean_lib ClifvNestedLoopReturn
 @[default_target] lean_lib ClifvStaticSharedBorrows

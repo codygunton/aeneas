@@ -107,6 +107,14 @@ let strip_target_or_instantiated_suffix (n : name) : name =
   in
   strip_all (List.rev n)
 
+(** Apply [f] to a name without its trailing [PeInstantiated] element (if
+    any), then put the element back at the end: monomorphized names must keep
+    their instantiation last. *)
+let map_name_before_instantiated (f : name -> name) (n : name) : name =
+  match List.rev n with
+  | (PeInstantiated _ as e) :: rest -> f (List.rev rest) @ [ e ]
+  | _ -> f n
+
 (** Extract and strip any trailing [PeTarget] element from a name, returning the
     cleaned name and an optional target suffix string (with [-] replaced by
     [_]). *)

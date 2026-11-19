@@ -216,11 +216,16 @@ let empty_names_map : names_map =
 (** Small helper to update an LLBC name by using a rename attribute *)
 let rename_llbc_name (rename : string) (llbc_name : llbc_name) : llbc_name =
   let rname = List.rev llbc_name in
-  let rname, target =
+  (* Keep the trailing [PeTarget]/[PeInstantiated] elements (in reverse order):
+     the rename applies to the last ident *)
+  let rec split_suffix rname =
     match rname with
-    | PeTarget tgt :: rest -> (rest, [ T.PeTarget tgt ])
+    | (T.PeTarget _ | T.PeInstantiated _) as e :: rest ->
+        let rest, suffix = split_suffix rest in
+        (rest, e :: suffix)
     | _ -> (rname, [])
   in
+  let rname, target = split_suffix rname in
   let name_prefix = List.tl rname in
   List.rev (target @ (T.PeIdent (rename, Disambiguator.zero) :: name_prefix))
 
@@ -1481,7 +1486,7 @@ let type_keyword ~(poly : bool) (span : Meta.span) =
 
 (** Helper *)
 let name_last_elem_as_ident (span : Meta.span) (n : llbc_name) : string =
-  let n = LlbcAstUtils.strip_target_suffix n in
+  let n = LlbcAstUtils.strip_target_or_instantiated_suffix n in
   match Collections.List.last n with
   | PeIdent (s, _) -> s
   | _ -> [%craise] span "Unexpected"
@@ -1641,7 +1646,9 @@ let ctx_fun_global_name_to_extract_string (meta : T.item_meta)
         end
     | _ :: name -> is_blanket_method name
   in
-  let is_blanket = is_blanket_method (LlbcAstUtils.strip_target_suffix fname) in
+  let is_blanket =
+    is_blanket_method (LlbcAstUtils.strip_target_or_instantiated_suffix fname)
+  in
   [%ldebug "fname: " ^ name_to_string ctx fname];
   let fname = ctx_compute_simple_name meta ctx fname in
   (* Add the blanket path elem if the method is a blanket method *)
@@ -2053,7 +2060,10 @@ let ctx_compute_var_basename (span : Meta.span) (ctx : extraction_ctx)
               *)
               (* The name shouldn't be empty, and its last element (after we remove
                  the target architecture suffix) should be an ident *)
-              let name = LlbcAstUtils.strip_target_suffix def.item_meta.name in
+              let name =
+                LlbcAstUtils.strip_target_or_instantiated_suffix
+                  def.item_meta.name
+              in
               let cl = Collections.List.last name in
               name_from_type_ident (TypesUtils.as_ident cl))
       | TVar _ -> (
@@ -2394,7 +2404,9 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
       let llbc_name =
         match src with
         | AdtConstructorSource ->
-            llbc_name @ [ PeIdent ("constructor", Disambiguator.zero) ]
+            LlbcAstUtils.map_name_before_instantiated
+              (fun n -> n @ [ PeIdent ("constructor", Disambiguator.zero) ])
+              llbc_name
         | _ -> llbc_name
       in
       (* When a trait method/const has a default implementation, this becomes a [fun_decl]
@@ -2411,7 +2423,9 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
         else
           match src with
           | TraitDefaultSource ->
-              llbc_name @ [ PeIdent ("default", Disambiguator.zero) ]
+              LlbcAstUtils.map_name_before_instantiated
+                (fun n -> n @ [ PeIdent ("default", Disambiguator.zero) ])
+                llbc_name
           | _ -> llbc_name
       in
       [%ldebug
@@ -2422,10 +2436,14 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
          to prevent collision with field projectors. *)
       if !Config.method_names_in_impl_namespace then
         let llbc_name =
-          match List.rev llbc_name with
-          | e :: (PeImpl _ :: _ as name) ->
-              List.rev (e :: PeIdent ("impl", Disambiguator.of_int 0) :: name)
-          | _ -> llbc_name
+          LlbcAstUtils.map_name_before_instantiated
+            (fun llbc_name ->
+              match List.rev llbc_name with
+              | e :: (PeImpl _ :: _ as name) ->
+                  List.rev
+                    (e :: PeIdent ("impl", Disambiguator.of_int 0) :: name)
+              | _ -> llbc_name)
+            llbc_name
         in
         ctx_fun_global_name_to_extract_string item_meta ctx llbc_name
       else
@@ -2436,10 +2454,14 @@ let ctx_compute_fun_global_name_no_suffix (item_meta : T.item_meta)
         if StringSet.mem name ctx.names_maps.adt_projectors then
           (* Add an name elem "impl" just before the last *)
           let llbc_name =
-            match List.rev llbc_name with
-            | e :: name ->
-                List.rev (e :: PeIdent ("impl", Disambiguator.of_int 0) :: name)
-            | _ -> [%internal_error] span
+            LlbcAstUtils.map_name_before_instantiated
+              (fun llbc_name ->
+                match List.rev llbc_name with
+                | e :: name ->
+                    List.rev
+                      (e :: PeIdent ("impl", Disambiguator.of_int 0) :: name)
+                | _ -> [%internal_error] span)
+              llbc_name
           in
           ctx_fun_global_name_to_extract_string item_meta ctx llbc_name
         else name
